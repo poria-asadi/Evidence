@@ -1,0 +1,67 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background); --color-foreground: var(--foreground);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace; --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring); --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground); --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground); --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground); --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5); --color-chart-4: var(--chart-4); --color-chart-3: var(--chart-3); --color-chart-2: var(--chart-2); --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring); --color-input: var(--input); --color-border: var(--border); --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground); --color-accent: var(--accent); --color-muted-foreground: var(--muted-foreground); --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground); --color-secondary: var(--secondary); --color-primary-foreground: var(--primary-foreground); --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground); --color-popover: var(--popover); --color-card-foreground: var(--card-foreground); --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * .6); --radius-md: calc(var(--radius) * .8); --radius-lg: var(--radius); --radius-xl: calc(var(--radius) * 1.4); --radius-2xl: calc(var(--radius) * 1.8); --radius-3xl: calc(var(--radius) * 2.2); --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: oklch(.975 .012 285); --foreground: oklch(.21 .035 278);
+  --card: oklch(1 0 0); --card-foreground: var(--foreground); --popover: oklch(1 0 0); --popover-foreground: var(--foreground);
+  --primary: oklch(.53 .21 284); --primary-foreground: oklch(.99 0 0);
+  --secondary: oklch(.945 .025 278); --secondary-foreground: oklch(.32 .09 282);
+  --muted: oklch(.95 .015 278); --muted-foreground: oklch(.51 .035 276);
+  --accent: oklch(.92 .045 196); --accent-foreground: oklch(.3 .08 220);
+  --destructive: oklch(.58 .21 27); --border: oklch(.88 .025 278); --input: oklch(.86 .03 278); --ring: oklch(.6 .17 284);
+  --chart-1: oklch(.54 .14 236); --chart-2: oklch(.67 .12 168); --chart-3: oklch(.68 .14 80); --chart-4: oklch(.62 .18 304); --chart-5: oklch(.63 .18 24);
+  --radius: .9rem;
+  --sidebar: oklch(.965 .012 228); --sidebar-foreground: var(--foreground); --sidebar-primary: var(--primary); --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(.935 .021 227); --sidebar-accent-foreground: var(--foreground); --sidebar-border: var(--border); --sidebar-ring: var(--ring);
+  --success: oklch(.62 .15 160); --success-soft: oklch(.955 .045 160); --success-ink: oklch(.38 .1 162);
+  --info-soft: oklch(.95 .04 218); --info-border: oklch(.82 .075 220); --info-ink: oklch(.36 .09 240);
+}
+
+.dark {
+  --background: oklch(.18 .023 244); --foreground: oklch(.95 .008 228); --card: oklch(.225 .024 242); --card-foreground: var(--foreground);
+  --popover: oklch(.225 .024 242); --popover-foreground: var(--foreground); --primary: oklch(.7 .12 226); --primary-foreground: oklch(.17 .03 242);
+  --secondary: oklch(.27 .03 241); --secondary-foreground: var(--foreground); --muted: oklch(.265 .026 242); --muted-foreground: oklch(.72 .025 233);
+  --accent: oklch(.3 .045 235); --accent-foreground: var(--foreground); --destructive: oklch(.7 .18 25); --border: oklch(1 0 0 / 12%); --input: oklch(1 0 0 / 16%); --ring: oklch(.64 .1 230);
+  --sidebar: oklch(.205 .026 243); --sidebar-foreground: var(--foreground); --sidebar-primary: var(--primary); --sidebar-primary-foreground: var(--primary-foreground); --sidebar-accent: oklch(.275 .032 241); --sidebar-accent-foreground: var(--foreground); --sidebar-border: var(--border); --sidebar-ring: var(--ring);
+  --success: oklch(.7 .13 163); --success-soft: oklch(.27 .05 163); --success-ink: oklch(.84 .08 163); --info-soft: oklch(.25 .045 238); --info-border: oklch(.39 .07 237); --info-ink: oklch(.82 .06 232);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans; }
+  body { @apply bg-background text-foreground; font-size: 16px; background-image: radial-gradient(circle at 80% 0%, oklch(.9 .08 290 / .38), transparent 28rem), radial-gradient(circle at 55% 55%, oklch(.93 .06 190 / .22), transparent 34rem); background-attachment: fixed; }
+  input, textarea, button { font: inherit; }
+}
+
+@layer components {
+  .workspace-rail { background: linear-gradient(180deg, oklch(.34 .16 286), oklch(.24 .1 274) 58%, oklch(.2 .07 255)); }
+  .brand-mark { background: linear-gradient(145deg, oklch(.78 .15 193), oklch(.65 .2 289)); box-shadow: 0 12px 28px oklch(.17 .08 270 / .42); }
+  .workspace-header { background: color-mix(in oklch, var(--background) 78%, white 22%); }
+  .review-link.active { background: linear-gradient(135deg, oklch(.94 .045 290), oklch(.96 .035 205)); box-shadow: inset 3px 0 var(--primary), 0 8px 24px oklch(.4 .1 280 / .08); }
+  .surface-card { @apply overflow-hidden rounded-3xl border bg-card/95 shadow-[0_2px_3px_rgb(35_30_80/3%),0_18px_50px_rgb(60_40_120/7%)]; }
+  .section-heading { @apply flex items-start gap-3 border-b p-5 sm:p-6; background: linear-gradient(135deg, oklch(.975 .02 292), oklch(.97 .024 205)); }
+  .section-heading h2 { @apply text-base font-semibold tracking-tight; }
+  .section-heading p { @apply mt-1 text-sm leading-6 text-muted-foreground; }
+  .section-icon { @apply mt-0.5 grid size-10 shrink-0 place-items-center rounded-xl text-primary; background: linear-gradient(145deg, oklch(.93 .06 290), oklch(.91 .055 205)); box-shadow: 0 7px 18px oklch(.4 .12 280 / .12); }
+  .section-icon svg { @apply size-4; }
+  .upload-zone { background: radial-gradient(circle at 50% 20%, oklch(.94 .07 292), transparent 65%), linear-gradient(160deg, oklch(.985 .01 285), oklch(.965 .035 205)); }
+}

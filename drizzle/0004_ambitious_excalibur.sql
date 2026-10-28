@@ -1,0 +1,1 @@
+ALTER TABLE `uploads` ADD `source_database` text DEFAULT 'Unknown' NOT NULL;
