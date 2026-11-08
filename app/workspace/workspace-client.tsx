@@ -50,15 +50,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  articleTextFromPages,
-  normalizedPdfText,
-  retainsReadablePdfText,
-} from '@/lib/searchable-pdf';
-import { optimizePdfStructure } from '@/lib/pdf-optimization';
-
-const FULL_TEXT_COMPRESSION_THRESHOLD = 8 * 1024 * 1024;
-const SEARCHABLE_PDF_VERSION = 3;
+import ExtractionStep from './extraction-step';
 
 type Draft = {
   title: string;
@@ -214,8 +206,6 @@ type FullTextFile = {
   fileName: string;
   contentType: string;
   size: number;
-  aiSize: number | null;
-  aiVersion: number;
   status: string;
   createdAt: number;
 };
@@ -225,12 +215,6 @@ type FullTextCriteria = {
   exclusion: string;
   declared: boolean;
   updatedAt: number | null;
-};
-type OpenAccessSummary = {
-  checked: number;
-  added: number;
-  unavailable: number;
-  errors: number;
 };
 type FullTextScreeningItem = {
   id: string;
@@ -316,6 +300,7 @@ const stages = [
   ['02', 'Import & deduplicate'],
   ['03', 'Title and Abstract Screening'],
   ['04', 'Full-text Screening'],
+  ['05', 'Data Extraction'],
 ];
 
 export default function WorkspaceClient({
@@ -333,6 +318,15 @@ export default function WorkspaceClient({
   const [query, setQuery] = useState('');
   const [navOpen, setNavOpen] = useState(false);
   const [step, setStep] = useState(1);
+  const stagesNavRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const nav = stagesNavRef.current;
+    const active = nav?.querySelector<HTMLElement>('[aria-current="step"]');
+    if (!nav || !active) return;
+    const navBounds = nav.getBoundingClientRect();
+    const activeBounds = active.getBoundingClientRect();
+    nav.scrollLeft += activeBounds.left - navBounds.left - (navBounds.width - activeBounds.width) / 2;
+  }, [step]);
   const [subscription, setSubscription] = useState<{
     plan: string;
     status: string;
@@ -396,16 +390,10 @@ export default function WorkspaceClient({
   const [fullTextCriteriaDraft, setFullTextCriteriaDraft] =
     useState<FullTextCriteria>(blankFullTextCriteria);
   const [fullTextCriteriaSaving, setFullTextCriteriaSaving] = useState(false);
-  const [openAccessSearching, setOpenAccessSearching] = useState(false);
-  const [openAccessSummary, setOpenAccessSummary] =
-    useState<OpenAccessSummary | null>(null);
   const [fullTextLoading, setFullTextLoading] = useState(false);
   const [fullTextUploadingId, setFullTextUploadingId] = useState<string | null>(
     null,
   );
-  const [fullTextOptimizingId, setFullTextOptimizingId] = useState<
-    string | null
-  >(null);
   const [fullTextScreeningItems, setFullTextScreeningItems] = useState<
     FullTextScreeningItem[]
   >([]);
@@ -420,6 +408,7 @@ export default function WorkspaceClient({
   const [fullTextDecisionSavingId, setFullTextDecisionSavingId] = useState<
     string | null
   >(null);
+  const [fullTextBulkSaving, setFullTextBulkSaving] = useState<'include' | 'exclude' | null>(null);
   const [fullTextCostConfirmed, setFullTextCostConfirmed] = useState(false);
   const [fullTextBatchProgress, setFullTextBatchProgress] = useState<{
     processed: number;
@@ -429,8 +418,6 @@ export default function WorkspaceClient({
   } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const batchStopRequested = useRef(false);
-  const openAccessStartedForReview = useRef<string | null>(null);
-  const fullTextOptimizationAttempts = useRef(new Set<string>());
 
   const completed = useMemo(
     () =>
@@ -470,27 +457,9 @@ export default function WorkspaceClient({
           loadFullTextScreening(activeId),
           loadFullTextCriteria(activeId),
         ]);
-        if (openAccessStartedForReview.current !== activeId) {
-          openAccessStartedForReview.current = activeId;
-          void discoverOpenAccessFullTexts(activeId);
-        }
       }
     }
   }, [step, activeId, screeningFilter, screeningPage]);
-  useEffect(() => {
-    if (step !== 4 || !activeId || fullTextOptimizingId) return;
-    const candidate = fullTextFiles.find(
-      (file) =>
-        file.contentType === 'application/pdf' &&
-        file.size > FULL_TEXT_COMPRESSION_THRESHOLD &&
-        (!file.aiSize || file.aiVersion < SEARCHABLE_PDF_VERSION),
-    );
-    if (!candidate) return;
-    const key = `${activeId}:${candidate.referenceId}:${candidate.createdAt}`;
-    if (fullTextOptimizationAttempts.current.has(key)) return;
-    fullTextOptimizationAttempts.current.add(key);
-    void optimizeStoredFullText(activeId, candidate);
-  }, [step, activeId, fullTextFiles, fullTextOptimizingId]);
   useEffect(() => {
     if (
       step === 3 &&
@@ -604,8 +573,10 @@ export default function WorkspaceClient({
       outcomes: review.outcomes || '',
     });
     setStep(
-      review.stage === 'fulltext'
-        ? 4
+      review.stage === 'extraction'
+        ? 5
+        : review.stage === 'fulltext'
+          ? 4
         : review.stage === 'screening'
           ? 3
           : review.stage === 'import'
@@ -1233,62 +1204,6 @@ export default function WorkspaceClient({
     }
   }
 
-  async function discoverOpenAccessFullTexts(
-    reviewId: string,
-    retryErrors = false,
-  ) {
-    setOpenAccessSearching(true);
-    if (!retryErrors) setOpenAccessSummary(null);
-    const totals: OpenAccessSummary = {
-      checked: 0,
-      added: 0,
-      unavailable: 0,
-      errors: 0,
-    };
-    try {
-      let remaining = 1;
-      while (remaining > 0) {
-        const response = await fetch(
-          `/api/reviews/${reviewId}/full-texts/open-access`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ retryErrors }),
-          },
-        );
-        const data = (await response.json()) as OpenAccessSummary & {
-          error?: string;
-          remaining?: number;
-        };
-        if (!response.ok)
-          throw new Error(data.error || 'Open-access search could not run.');
-        totals.checked += data.checked || 0;
-        totals.added += data.added || 0;
-        totals.unavailable += data.unavailable || 0;
-        totals.errors += data.errors || 0;
-        remaining = retryErrors ? 0 : Number(data.remaining || 0);
-        setOpenAccessSummary({ ...totals });
-        if (!data.checked) break;
-      }
-      await Promise.all([
-        loadFullTextFiles(reviewId),
-        loadFullTextScreening(reviewId),
-      ]);
-      if (totals.added)
-        setNotice(
-          `${totals.added} open-access full text${totals.added === 1 ? '' : 's'} added automatically.`,
-        );
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : 'Open-access search could not run.',
-      );
-    } finally {
-      setOpenAccessSearching(false);
-    }
-  }
-
   async function loadFullTextFiles(reviewId: string) {
     setFullTextLoading(true);
     try {
@@ -1299,7 +1214,9 @@ export default function WorkspaceClient({
       };
       if (!response.ok)
         throw new Error(data.error || 'Full-text files could not be loaded.');
-      setFullTextFiles(data.files || []);
+      const files = data.files || [];
+      setFullTextFiles(files);
+
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -1318,12 +1235,9 @@ export default function WorkspaceClient({
     try {
       if (file.size > 25 * 1024 * 1024)
         throw new Error('Full-text PDFs must be 25 MB or smaller.');
-      const { aiFile, articleText } = await preparePdfForAi(file);
       const form = new FormData();
       form.append('referenceId', referenceId);
       form.append('file', file);
-      form.append('articleText', articleText);
-      if (aiFile) form.append('aiFile', aiFile);
       const response = await fetch(`/api/reviews/${activeId}/full-texts`, {
         method: 'POST',
         body: form,
@@ -1336,11 +1250,7 @@ export default function WorkspaceClient({
         loadFullTextScreening(activeId),
       ]);
       setFullTextBatchProgress(null);
-      setNotice(
-        file.size > FULL_TEXT_COMPRESSION_THRESHOLD && !aiFile
-          ? 'Full text added. AI will read the extracted article text; the original PDF is available in the reader.'
-          : 'Full text added to the article.',
-      );
+      setNotice('Full text added and ready for review and screening.');
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -1349,48 +1259,6 @@ export default function WorkspaceClient({
       );
     } finally {
       setFullTextUploadingId(null);
-    }
-  }
-
-  async function optimizeStoredFullText(reviewId: string, file: FullTextFile) {
-    setFullTextOptimizingId(file.referenceId);
-    setError('');
-    try {
-      const sourceResponse = await fetch(
-        `/api/reviews/${reviewId}/full-texts/${file.referenceId}/content`,
-      );
-      if (!sourceResponse.ok)
-        throw new Error('The stored full text could not be prepared.');
-      const { aiFile, articleText } = await preparePdfForAi(
-        await sourceResponse.blob(),
-      );
-      const form = new FormData();
-      form.append('articleText', articleText);
-      if (aiFile) form.append('file', aiFile);
-      const saveResponse = await fetch(
-        `/api/reviews/${reviewId}/full-texts/${file.referenceId}/optimize`,
-        { method: 'POST', body: form },
-      );
-      const data = (await saveResponse.json()) as { error?: string };
-      if (!saveResponse.ok)
-        throw new Error(
-          data.error || 'The optimized AI copy could not be saved.',
-        );
-      await Promise.all([
-        loadFullTextFiles(reviewId),
-        loadFullTextScreening(reviewId),
-      ]);
-      setFullTextBatchProgress(null);
-      if (!aiFile)
-        setNotice('AI will read the extracted article text; the original PDF is available in the reader.');
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : 'This PDF could not be prepared for AI screening.',
-      );
-    } finally {
-      setFullTextOptimizingId(null);
     }
   }
 
@@ -1527,22 +1395,38 @@ export default function WorkspaceClient({
     }
   }
 
+  async function decideFullTextCategory(category: 'include' | 'exclude') {
+    if (!activeId) return;
+    setFullTextBulkSaving(category);
+    setError('');
+    try {
+      const response = await fetch(`/api/reviews/${activeId}/full-texts/decisions`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sourceCategory: category, decision: category }),
+      });
+      const data = await response.json() as { error?: string; updated?: number };
+      if (!response.ok) throw new Error(data.error || 'The bulk full-text decision could not be saved.');
+      await loadFullTextScreening(activeId);
+      setNotice(`${data.updated || 0} full-text article${data.updated === 1 ? '' : 's'} marked ${category} by the researcher.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The bulk full-text decision could not be saved.');
+    } finally {
+      setFullTextBulkSaving(null);
+    }
+  }
+
   async function runFullTextBatch() {
     if (!activeId || !fullTextCostConfirmed || !fullTextCriteria.declared)
       return;
     const pending = fullTextScreeningItems
       .filter((item) => {
-        const hasOptimizedCopy = fullTextFiles.some(
-          (file) => file.referenceId === item.id && Boolean(file.aiSize),
-        );
         return (
           (item.marpleStatus !== 'complete' ||
             item.poirotStatus !== 'complete' ||
             item.zeousStatus !== 'complete') &&
           (fullTextDetectiveIssues(item).length === 0 ||
-            (fullTextNeedsLongRun(item) &&
-              (item.size <= FULL_TEXT_COMPRESSION_THRESHOLD ||
-                hasOptimizedCopy)))
+            fullTextNeedsLongRun(item))
         );
       })
       .sort((left, right) => left.size - right.size);
@@ -1925,11 +1809,11 @@ export default function WorkspaceClient({
               </Button>
             </div>
           </header>
-          <div className="mx-auto max-w-[1480px] px-4 py-7 sm:px-8 lg:py-10">
-            <div className="mb-8 overflow-x-auto">
-              <div className="flex min-w-[760px] items-center">
+          <div className="mx-auto max-w-[1480px] px-4 py-5 sm:px-8 lg:py-7">
+            <nav ref={stagesNavRef} aria-label="Review stages" className="mb-6 overflow-x-auto rounded-2xl border bg-card/85 p-2 shadow-sm [scrollbar-width:thin]">
+              <div className="flex w-max min-w-full items-center gap-1 sm:gap-2">
                 {stages.map(([number, label], index) => (
-                  <div key={number} className="flex flex-1 items-center">
+                  <div key={number} className="flex items-center">
                     <button
                       onClick={() => setStep(index + 1)}
                       disabled={
@@ -1937,11 +1821,13 @@ export default function WorkspaceClient({
                         (index === 2 &&
                           !reviews.find((review) => review.id === activeId)
                             ?.referenceCount) ||
-                        (index === 3 &&
-                          reviews.find((review) => review.id === activeId)
-                            ?.stage !== 'fulltext')
+                        (index >= 3 &&
+                          !['fulltext', 'extraction'].includes(
+                            reviews.find((review) => review.id === activeId)?.stage || '',
+                          ))
                       }
-                      className={`flex min-w-0 items-center gap-2 whitespace-nowrap ${index >= 1 && index <= 3 ? 'text-[11px]' : 'text-xs'} ${step === index + 1 ? 'font-semibold text-primary' : index < step ? 'text-[var(--success-ink)]' : 'text-muted-foreground'} disabled:opacity-55`}
+                      aria-current={step === index + 1 ? 'step' : undefined}
+                      className={`flex min-h-10 items-center gap-2 rounded-xl px-2.5 text-xs whitespace-nowrap transition sm:px-3 ${step === index + 1 ? 'bg-primary/10 font-semibold text-primary' : index < step ? 'text-[var(--success-ink)] hover:bg-muted' : 'text-muted-foreground hover:bg-muted'} disabled:opacity-55`}
                     >
                       <span
                         className={`grid size-7 min-h-7 min-w-7 shrink-0 place-items-center overflow-hidden rounded-full border text-[10px] leading-none ${step === index + 1 ? 'border-primary bg-primary text-primary-foreground' : index < step ? 'border-[var(--success)] bg-[var(--success-soft)]' : 'bg-card'}`}
@@ -1950,13 +1836,10 @@ export default function WorkspaceClient({
                       </span>
                       {label}
                     </button>
-                    {index < stages.length - 1 && (
-                      <span className="mx-2 h-px min-w-4 flex-1 bg-border" />
-                    )}
                   </div>
                 ))}
               </div>
-            </div>
+            </nav>
             {error && (
               <div
                 role="alert"
@@ -2038,7 +1921,7 @@ export default function WorkspaceClient({
                 setPage={setScreeningPage}
                 continueToFullText={openFullTextScreening}
               />
-            ) : (
+            ) : step === 4 ? (
               <FullTextStep
                 reviewId={activeId}
                 results={categorizedResults}
@@ -2049,7 +1932,6 @@ export default function WorkspaceClient({
                   fullTextScreeningLoading
                 }
                 uploadingId={fullTextUploadingId}
-                optimizingId={fullTextOptimizingId}
                 upload={uploadFullText}
                 runResolver={(id) => runAiScreening(id, true)}
                 aiRunningId={aiRunningId}
@@ -2071,19 +1953,19 @@ export default function WorkspaceClient({
                 askAllFullTextSherlock={resolveAllFullTextConflicts}
                 decisionSavingId={fullTextDecisionSavingId}
                 decideFullText={decideFullText}
+                bulkSaving={fullTextBulkSaving}
+                decideFullTextCategory={decideFullTextCategory}
+                continueToExtraction={() => setStep(5)}
                 criteria={fullTextCriteria}
                 criteriaDraft={fullTextCriteriaDraft}
                 setCriteriaDraft={setFullTextCriteriaDraft}
                 criteriaDirty={fullTextCriteriaDirty}
                 criteriaSaving={fullTextCriteriaSaving}
                 saveCriteria={saveFullTextCriteria}
-                openAccessSearching={openAccessSearching}
-                openAccessSummary={openAccessSummary}
-                retryOpenAccess={() =>
-                  activeId && discoverOpenAccessFullTexts(activeId, true)
-                }
               />
-            )}
+            ) : activeId ? (
+              <ExtractionStep reviewId={activeId} back={() => setStep(4)} />
+            ) : null}
           </div>
         </section>
       </div>
@@ -2116,7 +1998,7 @@ function ProtocolStep({
             Define what evidence belongs.
           </h1>
         </div>
-        <div className="min-w-48 rounded-xl border bg-card p-3">
+        <div className="w-full min-w-48 rounded-xl border bg-card p-3 sm:w-auto">
           <div className="mb-2 flex justify-between text-xs">
             <span>Required fields</span>
             <span>{completed}/4</span>
@@ -2194,7 +2076,7 @@ function ProtocolStep({
           </div>
         </section>
       </div>
-      <div className="mt-6 flex justify-end">
+      <div className="sticky bottom-0 z-20 -mx-4 mt-6 flex justify-end border-t bg-background/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
         <Button
           onClick={save}
           disabled={completed < 4 || saving}
@@ -2297,7 +2179,7 @@ function ImportStep({
           )}
         </div>
       )}
-      <div className="mb-5 flex gap-2 overflow-x-auto rounded-2xl border bg-card/75 p-1.5 shadow-sm backdrop-blur">
+      <div className="mb-5 flex gap-2 overflow-x-auto rounded-2xl border bg-card/75 p-1.5 shadow-sm backdrop-blur [scrollbar-width:thin]">
         {(
           [
             ['upload', UploadCloud, 'Import'],
@@ -2442,7 +2324,7 @@ function ImportStep({
       )}
       {!loading && view === 'history' && <ImportHistory uploads={uploads} />}
       {!loading && uploads.length > 0 && (
-        <div className="mt-6 flex justify-end">
+        <div className="sticky bottom-0 z-20 -mx-4 mt-6 flex justify-end border-t bg-background/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
           <Button
             onClick={continueToScreening}
             disabled={pending > 0}
@@ -2883,9 +2765,18 @@ function ScreeningSetup({
           </span>
         </div>
       )}
+      <nav aria-label="Screening sections" className="mb-5 flex gap-2 overflow-x-auto pb-1 text-sm [scrollbar-width:thin]">
+        <a href="#screening-setup" className="shrink-0 rounded-xl border bg-card px-3 py-2 font-medium text-primary">Run screening</a>
+        <a href="#screening-results" className="shrink-0 rounded-xl border bg-card px-3 py-2 font-medium text-primary">Results</a>
+        <a href="#screening-manual" className="shrink-0 rounded-xl border bg-card px-3 py-2 font-medium text-primary">Manual review</a>
+      </nav>
       <div className="space-y-5">
-        <section className="surface-card">
-          <SectionHeading icon={<Cpu />} title="AI detectives" />
+        <section id="screening-setup" className="surface-card scroll-mt-24">
+          <details className="group">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 border-b p-5 text-sm font-semibold sm:p-6">
+            <span className="flex items-center gap-3"><span className="section-icon"><Cpu /></span><span>AI detectives <span className="block text-xs font-normal text-muted-foreground">{providersLoading ? 'Checking connections…' : `${providers.filter((provider) => provider.configured).length} connected`}</span></span></span>
+            <ChevronDown className="size-4 text-primary transition-transform group-open:rotate-180" />
+          </summary>
           <div className="grid gap-4 p-5 sm:grid-cols-2 sm:p-6 lg:grid-cols-3">
             {providersLoading ? (
               <p className="text-sm text-muted-foreground">
@@ -2926,6 +2817,7 @@ function ScreeningSetup({
               ))
             )}
           </div>
+          </details>
           <div className="border-t bg-muted/20 p-5 sm:px-6">
             <div className="rounded-2xl border bg-card p-4">
               <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
@@ -3116,7 +3008,7 @@ function ScreeningSetup({
           )}
         </section>
       </div>
-      <section className="mt-6 space-y-5">
+      <section id="screening-results" className="mt-6 scroll-mt-24 space-y-5">
         <div className="rounded-3xl border border-primary/25 bg-card p-5 shadow-[0_18px_50px_-30px_var(--primary)] sm:p-6">
           <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
             <div className="flex items-start gap-4">
@@ -3193,7 +3085,7 @@ function ScreeningSetup({
             </div>
           </div>
         </div>
-        <details className="surface-card group">
+        <details id="screening-manual" className="surface-card group scroll-mt-24">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5 font-semibold sm:p-6">
             <span>
               Optional researcher screening
@@ -3613,7 +3505,6 @@ function FullTextStep({
   files,
   loading,
   uploadingId,
-  optimizingId,
   upload,
   runResolver,
   aiRunningId,
@@ -3630,22 +3521,21 @@ function FullTextStep({
   askAllFullTextSherlock,
   decisionSavingId,
   decideFullText,
+  bulkSaving,
+  decideFullTextCategory,
+  continueToExtraction,
   criteria,
   criteriaDraft,
   setCriteriaDraft,
   criteriaDirty,
   criteriaSaving,
   saveCriteria,
-  openAccessSearching,
-  openAccessSummary,
-  retryOpenAccess,
 }: {
   reviewId: string | null;
   results: CategorizedResult[];
   files: FullTextFile[];
   loading: boolean;
   uploadingId: string | null;
-  optimizingId: string | null;
   upload: (referenceId: string, file: File) => void;
   runResolver: (referenceId: string) => void;
   aiRunningId: string | null;
@@ -3670,15 +3560,15 @@ function FullTextStep({
     referenceId: string,
     decision: 'include' | 'exclude' | 'unclear',
   ) => void;
+  bulkSaving: 'include' | 'exclude' | null;
+  decideFullTextCategory: (category: 'include' | 'exclude') => void;
+  continueToExtraction: () => void;
   criteria: FullTextCriteria;
   criteriaDraft: FullTextCriteria;
   setCriteriaDraft: React.Dispatch<React.SetStateAction<FullTextCriteria>>;
   criteriaDirty: boolean;
   criteriaSaving: boolean;
   saveCriteria: () => void;
-  openAccessSearching: boolean;
-  openAccessSummary: OpenAccessSummary | null;
-  retryOpenAccess: () => void;
 }) {
   const [readerReferenceId, setReaderReferenceId] = useState<string | null>(
     null,
@@ -3702,19 +3592,14 @@ function FullTextStep({
       item.poirotStatus !== 'complete' ||
       item.zeousStatus !== 'complete',
   );
-  const optimizedReferenceIds = new Set(
-    files.filter((file) => file.aiSize).map((file) => file.referenceId),
-  );
   const canScreenFullText = (item: FullTextScreeningItem) =>
     fullTextDetectiveIssues(item).length === 0 ||
-    (fullTextNeedsLongRun(item) &&
-      (item.size <= FULL_TEXT_COMPRESSION_THRESHOLD ||
-        optimizedReferenceIds.has(item.id)));
+    fullTextNeedsLongRun(item);
   const incompleteFullTexts = pendingFullTexts.filter(
-    (item) => item.id !== optimizingId && !canScreenFullText(item),
+    (item) => !canScreenFullText(item),
   );
   const readyForFullTextScreening = pendingFullTexts.filter(
-    (item) => item.id !== optimizingId && canScreenFullText(item),
+    (item) => canScreenFullText(item),
   );
   const readerItem = screeningItems.find(
     (item) => item.id === readerReferenceId,
@@ -3735,6 +3620,13 @@ function FullTextStep({
           Return to title and abstract
         </Button>
       </div>
+
+      <nav aria-label="Full-text sections" className="mb-5 flex gap-2 overflow-x-auto pb-1 text-sm [scrollbar-width:thin]">
+        <a href="#fulltext-criteria" className="shrink-0 rounded-xl border bg-card px-3 py-2 font-medium text-primary">Criteria</a>
+        <a href="#fulltext-articles" className="shrink-0 rounded-xl border bg-card px-3 py-2 font-medium text-primary">Articles</a>
+        <a href="#fulltext-run" className="shrink-0 rounded-xl border bg-card px-3 py-2 font-medium text-primary">Run screening</a>
+        <a href="#fulltext-decisions" className="shrink-0 rounded-xl border bg-card px-3 py-2 font-medium text-primary">Decisions</a>
+      </nav>
 
       <section className="surface-card p-5 sm:p-6">
         <div className="flex items-center gap-3">
@@ -3777,7 +3669,7 @@ function FullTextStep({
         )}
       </section>
 
-      <section className="surface-card mt-6 p-5 sm:p-6">
+      <section id="fulltext-criteria" className="surface-card mt-6 scroll-mt-24 p-5 sm:p-6">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div>
             <div className="flex items-center gap-2">
@@ -3892,7 +3784,7 @@ function FullTextStep({
         </div>
       </section>
 
-      <section className="surface-card mt-6 overflow-hidden">
+      <section id="fulltext-articles" className="surface-card mt-6 scroll-mt-24 overflow-hidden">
         <div className="border-b p-5 sm:p-6">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
             <div>
@@ -3901,40 +3793,9 @@ function FullTextStep({
                 {included.length} ready for full text
               </Badge>
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={openAccessSearching}
-              onClick={retryOpenAccess}
-            >
-              <Search />
-              {openAccessSearching
-                ? 'Searching open access…'
-                : 'Retry open-access search'}
-            </Button>
           </div>
           <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-            {openAccessSearching ? (
-              <span>
-                Searching trusted open-access records and adding available full
-                texts automatically…
-              </span>
-            ) : openAccessSummary ? (
-              <span>
-                Checked {openAccessSummary.checked} article
-                {openAccessSummary.checked === 1 ? '' : 's'} · added{' '}
-                {openAccessSummary.added} full text
-                {openAccessSummary.added === 1 ? '' : 's'} automatically
-                {openAccessSummary.errors
-                  ? ` · ${openAccessSummary.errors} lookup${openAccessSummary.errors === 1 ? '' : 's'} can be retried`
-                  : ''}
-              </span>
-            ) : (
-              <span>
-                Open-access full texts are searched automatically. Upload a PDF
-                only when no open version is found.
-              </span>
-            )}
+            Upload a PDF for each included article before full-text screening.
           </div>
         </div>
         {loading ? (
@@ -3947,7 +3808,7 @@ function FullTextStep({
             screening result.
           </div>
         ) : (
-          <div className="divide-y">
+          <div className="max-h-[min(65dvh,42rem)] divide-y overflow-y-auto overscroll-contain [scrollbar-width:thin]">
             {included.map((item) => {
               const stored = files.find((file) => file.referenceId === item.id);
               const screeningItem = screeningItems.find(
@@ -3984,15 +3845,13 @@ function FullTextStep({
                     {stored && (
                       <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-emerald-700">
                         <BookOpenCheck className="size-3.5" />
-                        {stored.status === 'open_access'
-                          ? 'Open-access full text added automatically'
-                          : 'Full text uploaded'}{' '}
+                        Full text uploaded{' '}
                         · {stored.fileName} · {formatBytes(stored.size)} · Open
                         reader
                       </p>
                     )}
                   </button>
-                  <div className="shrink-0">
+                  <div className="flex shrink-0 flex-col gap-2">
                     <input
                       id={inputId}
                       type="file"
@@ -4029,7 +3888,7 @@ function FullTextStep({
         )}
       </section>
 
-      <section className="surface-card mt-6 p-5 sm:p-6">
+      <section id="fulltext-run" className="surface-card mt-6 scroll-mt-24 p-5 sm:p-6">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[.14em] text-primary">
@@ -4130,8 +3989,7 @@ function FullTextStep({
               criteriaDirty ||
               !firstLineReady ||
               readyForFullTextScreening.length === 0 ||
-              Boolean(screeningRunningId) ||
-              Boolean(optimizingId)
+              Boolean(screeningRunningId)
             }
             onClick={startScreening}
           >
@@ -4230,6 +4088,7 @@ function FullTextStep({
           </div>
         )}
 
+        <div id="fulltext-decisions" className="scroll-mt-24" />
         {screeningItems.length === 0 ? (
           <div className="mt-5 rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
             Add or retrieve at least one included article full text to begin
@@ -4255,6 +4114,20 @@ function FullTextStep({
                   <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
                     <h3 className="font-semibold">{label}</h3>
                     <div className="flex items-center gap-2">
+                      {(category === 'include' || category === 'exclude') && items.length > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className={category === 'include'
+                            ? 'border-emerald-300 bg-white/80 text-emerald-900'
+                            : 'border-rose-300 bg-white/80 text-rose-900'}
+                          disabled={Boolean(bulkSaving) || Boolean(decisionSavingId)}
+                          onClick={() => decideFullTextCategory(category)}
+                        >
+                          {category === 'include' ? <Check /> : <X />}
+                          {bulkSaving === category ? 'Saving…' : `${category === 'include' ? 'Include' : 'Exclude'} all`}
+                        </Button>
+                      )}
                       {category === 'conflict' && unresolved > 0 && (
                         <Button
                           size="sm"
@@ -4289,6 +4162,8 @@ function FullTextStep({
                           sherlockReady={fullTextSherlockReady}
                           askSherlock={askFullTextSherlock}
                           openReader={() => setReaderReferenceId(item.id)}
+                          saving={decisionSavingId === item.id || Boolean(bulkSaving)}
+                          decide={decideFullText}
                         />
                       ))
                     )}
@@ -4299,6 +4174,11 @@ function FullTextStep({
           </div>
         )}
       </section>
+      <div className="mt-6 flex justify-end">
+        <Button size="lg" onClick={continueToExtraction} disabled={!reviewId}>
+          Continue to data extraction <ArrowRight />
+        </Button>
+      </div>
       {reviewId && readerItem && (
         <FullTextReader
           reviewId={reviewId}
@@ -4480,6 +4360,9 @@ function ResearcherDecisionBadge({
 }
 
 function fullTextCategory(item: FullTextScreeningItem) {
+  if (item.researcherDecision === 'include') return 'include';
+  if (item.researcherDecision === 'exclude') return 'exclude';
+  if (item.researcherDecision === 'unclear') return 'conflict';
   if (
     item.marpleStatus !== 'complete' ||
     item.poirotStatus !== 'complete' ||
@@ -4508,6 +4391,8 @@ function FullTextResultCard({
   sherlockReady,
   askSherlock,
   openReader,
+  saving,
+  decide,
 }: {
   item: FullTextScreeningItem;
   category: 'include' | 'conflict' | 'exclude';
@@ -4515,6 +4400,8 @@ function FullTextResultCard({
   sherlockReady: boolean;
   askSherlock: (referenceId: string) => void;
   openReader: () => void;
+  saving: boolean;
+  decide: (referenceId: string, decision: 'include' | 'exclude' | 'unclear') => void;
 }) {
   return (
     <article className="rounded-xl border bg-white/90 p-3 shadow-sm">
@@ -4592,6 +4479,25 @@ function FullTextResultCard({
           <Sparkles /> {running ? 'Investigating…' : 'Ask Sherlock Holmes'}
         </Button>
       )}
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+        <span className="mr-1 text-xs font-semibold text-muted-foreground">Researcher decision</span>
+        {(['include', 'exclude', 'unclear'] as const).map((decision) => (
+          <Button
+            key={decision}
+            size="sm"
+            variant="outline"
+            className={item.researcherDecision === decision
+              ? decision === 'include' ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                : decision === 'exclude' ? 'border-rose-500 bg-rose-50 text-rose-800'
+                  : 'border-violet-500 bg-violet-50 text-violet-800'
+              : ''}
+            disabled={saving}
+            onClick={() => decide(item.id, decision)}
+          >
+            {decision === 'unclear' ? 'Needs decision' : decision === 'include' ? 'Include' : 'Exclude'}
+          </Button>
+        ))}
+      </div>
     </article>
   );
 }
@@ -4938,96 +4844,6 @@ function MiniStat({ label, value }: { label: string; value: number }) {
       <p className="mt-1 text-xs text-muted-foreground">{label}</p>
     </div>
   );
-}
-
-async function preparePdfForAi(sourceFile: Blob) {
-  const pdfjs = await import('pdfjs-dist');
-  pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-  const sourceBytes = new Uint8Array(await sourceFile.arrayBuffer());
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(sourceBytes),
-  });
-  const source = await loadingTask.promise;
-  const pageTexts: string[] = [];
-  try {
-    for (let pageNumber = 1; pageNumber <= source.numPages; pageNumber += 1) {
-      const page = await source.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const text = content.items
-        .map((item) => ('str' in item ? item.str : ''))
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      pageTexts.push(text);
-      page.cleanup();
-    }
-    const articleText = articleTextFromPages(pageTexts);
-    if (normalizedPdfText(pageTexts.join(' ')).length < 200)
-      throw new Error(
-        'This PDF has no readable article text. Upload a searchable PDF with OCR text before AI screening.',
-      );
-    if (articleText.length > 300_000)
-      throw new Error(
-        'The extracted article text is too long for reliable AI screening.',
-      );
-    if (sourceBytes.byteLength <= FULL_TEXT_COMPRESSION_THRESHOLD)
-      return { aiFile: null, articleText };
-
-    // Try lossless structural compression. Never rasterize pages or replace
-    // their text with an invisible overlay.
-    const candidates: Uint8Array[] = [];
-    try { candidates.push(await optimizePdfStructure(sourceBytes)); } catch {
-      // A malformed PDF can still be assessed from its extracted text.
-    }
-    try {
-      const { PDFDocument } = await import('pdf-lib');
-      const document = await PDFDocument.load(sourceBytes);
-      candidates.push(await document.save({ useObjectStreams: true }));
-    } catch {
-      // Keep the original and use the validated text when rewriting fails.
-    }
-    candidates.sort((a, b) => a.byteLength - b.byteLength);
-    for (const bytes of candidates) {
-      if (
-        bytes.byteLength <= FULL_TEXT_COMPRESSION_THRESHOLD &&
-        (await hasReadablePdfText(pdfjs, bytes, pageTexts))
-      ) return { aiFile: searchablePdfFile(bytes), articleText };
-    }
-    return { aiFile: null, articleText };
-  } finally {
-    await loadingTask.destroy();
-  }
-}
-
-function searchablePdfFile(bytes: Uint8Array<ArrayBufferLike>) {
-  return new File([new Uint8Array(bytes)], 'ai-lossless-v3.pdf', {
-    type: 'application/pdf',
-  });
-}
-
-async function hasReadablePdfText(
-  pdfjs: typeof import('pdfjs-dist'),
-  bytes: Uint8Array<ArrayBufferLike>,
-  sourcePages: string[],
-) {
-  const task = pdfjs.getDocument({ data: new Uint8Array(bytes) });
-  try {
-    const document = await task.promise;
-    const candidatePages: string[] = [];
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      const page = await document.getPage(pageNumber);
-      const content = await page.getTextContent();
-      candidatePages.push(content.items
-        .map((item) => ('str' in item ? item.str : ''))
-        .join(' '));
-      page.cleanup();
-    }
-    return retainsReadablePdfText(sourcePages, candidatePages);
-  } catch {
-    return false;
-  } finally {
-    await task.destroy();
-  }
 }
 
 function formatBytes(bytes: number) {

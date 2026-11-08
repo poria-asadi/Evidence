@@ -12,6 +12,12 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "test:pdf": "node --experimental-strip-types scripts/verify-searchable-pdf.mts",
+    "test:extraction": "node --experimental-strip-types scripts/verify-extraction-sheet.mts",
+    "test:extraction-evidence": "node --experimental-strip-types scripts/verify-extraction-evidence.mts",
+    "test:extraction-resilience": "node --experimental-strip-types scripts/verify-extraction-resilience.mts",
+    "test:extraction-reconciliation": "node --experimental-strip-types scripts/verify-extraction-reconciliation.mts",
+    "test:extraction-year": "node --experimental-strip-types scripts/verify-extraction-year.mts",
+    "test:pdf-to-text": "node --experimental-strip-types scripts/verify-pdf-to-text.mts",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

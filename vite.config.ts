@@ -48,7 +48,7 @@ export default defineConfig(async () => {
     css: { postcss: { plugins: [tailwindcss()] } },
     // fflate is loaded by a server-only XLSX route. Excluding it from Vite's
     // RSC dependency optimizer prevents stale deps_rsc paths during downloads.
-    optimizeDeps: { exclude: ['fflate'] },
+    optimizeDeps: { exclude: ['fflate', 'pdfjs-dist'] },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,

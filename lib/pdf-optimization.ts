@@ -1,6 +1,6 @@
 // QPDF rewrites PDF objects and Flate streams without rendering pages or
 // changing any image into JPEG. The original PDF is kept separately in R2.
-export async function optimizePdfStructure(source: Uint8Array) {
+export async function optimizePdfStructure(source: Uint8Array, optimizeImages = false) {
   const { default: createQpdf } = await import('@neslinesli93/qpdf-wasm');
   const qpdf = await createQpdf({ locateFile: () => '/qpdf.wasm' });
   const fs = qpdf.FS as typeof qpdf.FS & {
@@ -16,6 +16,12 @@ export async function optimizePdfStructure(source: Uint8Array) {
       '--object-streams=generate',
       '--recompress-flate',
       '--compression-level=9',
+      ...(optimizeImages ? [
+        '--optimize-images',
+        '--jpeg-quality=90',
+        '--oi-min-width=512',
+        '--oi-min-height=512',
+      ] : []),
       input,
       output,
     ]);

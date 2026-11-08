@@ -326,3 +326,35 @@ export const fullTextDecisions = sqliteTable(
     ),
   ],
 );
+
+export const extractionTemplates = sqliteTable('extraction_templates', {
+  reviewId: text('review_id').primaryKey().references(() => reviews.id),
+  ownerId: text('owner_id').notNull().references(() => users.id),
+  fileName: text('file_name').notNull(),
+  r2Key: text('r2_key').notNull(),
+  format: text('format').notNull(),
+  headersJson: text('headers_json').notNull(),
+  previewJson: text('preview_json').notNull(),
+  worksheetPath: text('worksheet_path'),
+  headerRow: integer('header_row').notNull(),
+  schemaJson: text('schema_json'),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export const extractionRecords = sqliteTable(
+  'extraction_records',
+  {
+    id: text('id').primaryKey(),
+    reviewId: text('review_id').notNull().references(() => reviews.id),
+    referenceId: text('reference_id').notNull().references(() => references.id),
+    provider: text('provider').notNull().default('zeous'),
+    templateUpdatedAt: integer('template_updated_at').notNull(),
+    valuesJson: text('values_json').notNull(),
+    evidenceJson: text('evidence_json').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_extraction_records_review_reference_provider').on(table.reviewId, table.referenceId, table.provider),
+    index('idx_extraction_records_review').on(table.reviewId),
+  ],
+);

@@ -40,7 +40,7 @@ export async function GET(
     LEFT JOIN full_text_assessments oa ON oa.review_id = f.review_id AND oa.reference_id = f.reference_id AND oa.provider = 'openai' AND oa.prompt_version = ?
     LEFT JOIN full_text_assessments za ON za.review_id = f.review_id AND za.reference_id = f.reference_id AND za.provider = 'zeous' AND za.prompt_version = ?
     LEFT JOIN full_text_assessments ja ON ja.review_id = f.review_id AND ja.reference_id = f.reference_id AND ja.provider = 'adjudicator' AND ja.prompt_version = ?
-    WHERE f.review_id = ? AND f.owner_id = ?
+    WHERE f.review_id = ? AND f.owner_id = ? AND f.status = 'uploaded'
     ORDER BY f.created_at ASC`)
     .bind(
       FULL_TEXT_PROMPT_VERSION,

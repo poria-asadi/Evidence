@@ -21,7 +21,7 @@ export async function PATCH(
   const article =
     await env.DB.prepare(`SELECT f.reference_id FROM full_text_files f
     JOIN reviews v ON v.id = f.review_id
-    WHERE f.review_id = ? AND f.reference_id = ? AND f.owner_id = ? AND v.owner_id = ?`)
+    WHERE f.review_id = ? AND f.reference_id = ? AND f.owner_id = ? AND v.owner_id = ? AND f.status = 'uploaded'`)
       .bind(reviewId, referenceId, user.userId, user.userId)
       .first();
   if (!article)
@@ -51,7 +51,7 @@ export async function PATCH(
       now,
     ),
     env.DB.prepare(
-      "UPDATE reviews SET stage = 'fulltext', updated_at = ? WHERE id = ? AND owner_id = ?",
+      "UPDATE reviews SET stage = CASE WHEN stage = 'extraction' THEN stage ELSE 'fulltext' END, updated_at = ? WHERE id = ? AND owner_id = ?",
     ).bind(now, reviewId, user.userId),
   ]);
   return Response.json({ referenceId, decision, notes, updatedAt: now });

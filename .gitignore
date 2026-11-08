@@ -39,8 +39,3 @@ next-env.d.ts
 /outputs/
 /work/
 *.tsbuildinfo
-
-# local tooling and temporary files
-/.sites-runtime/
-/.pnpm-store/
-/tmp/

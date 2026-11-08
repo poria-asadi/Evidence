@@ -1,6 +1,6 @@
-import { Buffer } from 'node:buffer';
 import { env } from 'cloudflare:workers';
 import { normalizedPdfText } from '@/lib/searchable-pdf';
+import { ensureFullTextPrepared } from '@/lib/full-text-preparation';
 import {
   adjudicateFullTextConflict,
   assessFullTextWithProvider,
@@ -95,62 +95,34 @@ export async function runFullTextAssessment({
 
   const article =
     await env.DB.prepare(`SELECT r.id, r.title, f.file_name AS fileName, f.r2_key AS r2Key,
-      f.ai_r2_key AS aiR2Key, f.ai_size AS aiSize, f.content_type AS contentType,
-      f.size AS size
+      f.content_type AS contentType
       FROM "references" r JOIN full_text_files f ON f.review_id = r.review_id AND f.reference_id = r.id
-      WHERE r.id = ? AND r.review_id = ? AND f.owner_id = ?`)
+      WHERE r.id = ? AND r.review_id = ? AND f.owner_id = ? AND f.status = 'uploaded'`)
       .bind(referenceId, reviewId, userId)
       .first<{
         id: string;
         title: string | null;
         fileName: string;
         r2Key: string;
-        aiR2Key: string | null;
-        aiSize: number | null;
         contentType: string;
-        size: number;
       }>();
   if (!article)
     throw new FullTextScreeningError(
       404,
       'Add or retrieve the article full text before running screening.',
     );
-  const isPdf = article.contentType === 'application/pdf';
-  const textObject = isPdf
-    ? await env.FILES.get(`${article.r2Key}.txt`)
-    : null;
-  const extractedText = textObject ? await textObject.text() : undefined;
-  if (extractedText && (normalizedPdfText(extractedText).length < 200 || extractedText.length > 300_000))
+  let extractedText: string;
+  try {
+    extractedText = await ensureFullTextPrepared(article.r2Key, article.contentType);
+  } catch (error) {
+    throw new FullTextScreeningError(409, error instanceof Error ? error.message : 'This article needs readable extracted text before AI screening.');
+  }
+  if (normalizedPdfText(extractedText).length < 200 || extractedText.length > 300_000)
     throw new FullTextScreeningError(409, 'The extracted article text is incomplete. Prepare this PDF again.');
-  const pdfKey = article.aiR2Key?.endsWith('.pdf')
-    ? article.aiR2Key
-    : article.r2Key;
-  const sendPdf = isPdf && !article.aiR2Key?.endsWith('.txt') &&
-    (pdfKey !== article.r2Key || article.size <= 8 * 1024 * 1024);
-  const storedFullText = sendPdf || !isPdf
-    ? await env.FILES.get(pdfKey)
-    : null;
-  if ((sendPdf || !isPdf) && !storedFullText)
-    throw new FullTextScreeningError(
-      404,
-      'The stored full text could not be found. Replace the file and retry.',
-    );
-  if (isPdf && !extractedText && article.aiR2Key?.endsWith('v2.pdf'))
-    throw new FullTextScreeningError(409, 'Prepare this PDF again so its article text can be verified.');
-  if (isPdf && !extractedText && !sendPdf)
-    throw new FullTextScreeningError(409, 'This PDF needs a readable text layer before AI screening.');
-  const pdfDataUrl = sendPdf && storedFullText
-    ? `data:application/pdf;base64,${Buffer.from(await storedFullText.arrayBuffer()).toString('base64')}`
-    : undefined;
-  const fullText = isPdf
-    ? extractedText
-    : articleText(await storedFullText!.text(), article.contentType);
   const input = {
     protocol: protocolText(review),
     title: article.title || 'Untitled article',
-    fileName: article.fileName,
-    pdfDataUrl,
-    fullText,
+    fullText: extractedText,
   };
 
   let previous = await getStoredAssessments(reviewId, referenceId);
@@ -377,21 +349,3 @@ function protocolText(review: Record<string, string | null>) {
     .join('\n');
 }
 
-function articleText(value: string, contentType: string) {
-  const withoutReferences = value.replace(
-    /<ref-list\b[^>]*>[\s\S]*?<\/ref-list>/gi,
-    ' ',
-  );
-  const plain = (contentType.includes('xml') ? withoutReferences : value)
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;|&#160;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (plain.length <= 300_000) return plain;
-  return `${plain.slice(0, 240_000)}\n\n[Middle section shortened to fit the detective context window.]\n\n${plain.slice(-60_000)}`;
-}

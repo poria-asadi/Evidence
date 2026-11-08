@@ -25,9 +25,9 @@ export const PRIMARY_PROVIDER_IDS: PrimaryProviderId[] = [
 export const PROMPT_VERSION = 'title_abstract_v4_decision_only';
 export const ADJUDICATOR_PROMPT_VERSION =
   'title_abstract_conflict_claude_sonnet_5_v4_binary';
-export const FULL_TEXT_PROMPT_VERSION = 'full_text_screening_v3_verified_text';
+export const FULL_TEXT_PROMPT_VERSION = 'full_text_screening_v10_complete_txt';
 export const FULL_TEXT_ADJUDICATOR_PROMPT_VERSION =
-  'full_text_conflict_claude_sonnet_5_v4_verified_text';
+  'full_text_conflict_claude_sonnet_5_v11_complete_txt';
 
 const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
 const DEFAULT_ZEOUS_MODEL = 'anthropic/claude-haiku-5.5';
@@ -167,15 +167,13 @@ export async function assessFullTextWithProvider(
   input: {
     protocol: string;
     title: string;
-    fileName: string;
-    pdfDataUrl?: string;
-    fullText?: string;
+    fullText: string;
   },
 ) {
   const model = modelForProvider(provider);
   if (!model) throw new ProviderError('provider_not_configured');
   return requestOpenRouter(model, FULL_TEXT_SYSTEM, fullTextContent(input), {
-    pdf: Boolean(input.pdfDataUrl),
+    pdf: false,
     timeoutMs: FULL_TEXT_REQUEST_TIMEOUT_MS,
   });
 }
@@ -183,9 +181,7 @@ export async function assessFullTextWithProvider(
 export async function adjudicateFullTextConflict(input: {
   protocol: string;
   title: string;
-  fileName: string;
-  pdfDataUrl?: string;
-  fullText?: string;
+  fullText: string;
   assessments: Record<PrimaryProviderId, ScreeningAssessment>;
 }) {
   const model = env.OPENROUTER_ADJUDICATOR_MODEL;
@@ -195,7 +191,7 @@ export async function adjudicateFullTextConflict(input: {
     FULL_TEXT_ADJUDICATION_SYSTEM,
     fullTextContent(input, input.assessments),
     {
-      pdf: Boolean(input.pdfDataUrl),
+      pdf: false,
       preserveReason: true,
       binaryDecision: true,
       timeoutMs: FULL_TEXT_REQUEST_TIMEOUT_MS,
@@ -323,28 +319,14 @@ function fullTextContent(
   input: {
     protocol: string;
     title: string;
-    fileName: string;
-    pdfDataUrl?: string;
-    fullText?: string;
+    fullText: string;
   },
   assessments?: Record<PrimaryProviderId, ScreeningAssessment>,
 ): string | OpenRouterContent[] {
   const prior = assessments
     ? `\n\nFIRST-LINE ASSESSMENTS\n${JSON.stringify(assessments)}\n\nProvide this second opinion only because the researcher explicitly requested it.`
     : '';
-  const text = `REVIEW PROTOCOL\n${input.protocol}\n\nARTICLE TITLE\n${input.title}${prior}${input.fullText ? `\n\nARTICLE TEXT\n${input.fullText}` : ''}`;
-  if (!input.pdfDataUrl)
-    return input.fullText ? text : `${text}\n\nFULL ARTICLE TEXT\n[Full text unavailable]`;
-  return [
-    {
-      type: 'text',
-      text,
-    },
-    {
-      type: 'file',
-      file: { filename: input.fileName, file_data: input.pdfDataUrl },
-    },
-  ];
+  return `REVIEW PROTOCOL\n${input.protocol}\n\nARTICLE TITLE\n${input.title}${prior}\n\nARTICLE TEXT\n${input.fullText}`;
 }
 
 function parsed(

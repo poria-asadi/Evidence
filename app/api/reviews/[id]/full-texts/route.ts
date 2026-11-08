@@ -1,10 +1,10 @@
 import { env } from 'cloudflare:workers';
 import { hasActiveAccess, requireApiUser } from '@/lib/current-user';
 import { PROMPT_VERSION } from '@/lib/llm-providers';
-import { normalizedPdfText } from '@/lib/searchable-pdf';
+import { extractPdfText } from '@/lib/pdf-to-text';
+import { deleteLegacyFullTextSections, FULL_TEXT_PIPELINE_VERSION } from '@/lib/full-text-preparation';
 
 const MAX_BYTES = 25 * 1024 * 1024;
-const MAX_AI_BYTES = 8 * 1024 * 1024;
 
 export async function GET(
   _request: Request,
@@ -24,12 +24,9 @@ export async function GET(
 
   const files = await env.DB.prepare(`SELECT reference_id AS referenceId,
     file_name AS fileName, content_type AS contentType, size,
-    ai_size AS aiSize,
-    CASE WHEN ai_r2_key LIKE '%-ai-lossless-v3.pdf' OR ai_r2_key LIKE '%.pdf.txt' THEN 3
-      WHEN ai_r2_key LIKE '%-ai-searchable-v2.pdf' THEN 2 ELSE 1 END AS aiVersion,
     status,
     created_at AS createdAt
-    FROM full_text_files WHERE review_id = ? AND owner_id = ?
+    FROM full_text_files WHERE review_id = ? AND owner_id = ? AND status = 'uploaded'
     ORDER BY created_at DESC`)
     .bind(id, user.userId)
     .all();
@@ -53,8 +50,6 @@ export async function POST(
   const form = await request.formData();
   const referenceId = form.get('referenceId');
   const file = form.get('file');
-  const aiFile = form.get('aiFile');
-  const articleText = form.get('articleText');
   if (typeof referenceId !== 'string' || !referenceId)
     return Response.json(
       { error: 'Choose an included article.' },
@@ -70,34 +65,6 @@ export async function POST(
   if (file.size > MAX_BYTES)
     return Response.json(
       { error: 'Full-text PDFs must be 25 MB or smaller.' },
-      { status: 413 },
-    );
-  if (
-    typeof articleText !== 'string' ||
-    normalizedPdfText(articleText).length < 200 ||
-    articleText.length > 300_000
-  )
-    return Response.json(
-      { error: 'A complete, readable article text is required for AI screening.' },
-      { status: 422 },
-    );
-  if (aiFile !== null && !(aiFile instanceof File))
-    return Response.json(
-      { error: 'The optimized AI copy is invalid.' },
-      { status: 400 },
-    );
-  if (
-    aiFile instanceof File &&
-    (!aiFile.name.toLowerCase().endsWith('.pdf') ||
-      aiFile.type !== 'application/pdf')
-  )
-    return Response.json(
-      { error: 'The optimized AI copy must be a PDF.' },
-      { status: 415 },
-    );
-  if (aiFile instanceof File && aiFile.size > MAX_AI_BYTES)
-    return Response.json(
-      { error: 'The optimized AI copy must be 8 MB or smaller.' },
       { status: 413 },
     );
 
@@ -125,6 +92,14 @@ export async function POST(
       { status: 409 },
     );
 
+  const pdfBytes = await file.arrayBuffer();
+  let articleText: string;
+  try {
+    articleText = await extractPdfText(pdfBytes);
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : 'The PDF text could not be extracted.' }, { status: 422 });
+  }
+
   const existing = await env.DB.prepare(
     'SELECT r2_key AS r2Key, ai_r2_key AS aiR2Key FROM full_text_files WHERE review_id = ? AND reference_id = ? AND owner_id = ?',
   )
@@ -134,23 +109,21 @@ export async function POST(
   const now = Date.now();
   const r2Key = `${safePart(user.userId)}/${reviewId}/full-text/${referenceId}/${id}-${safeName(file.name)}`;
   const textR2Key = `${r2Key}.txt`;
-  const textSize = new TextEncoder().encode(articleText).length;
-  const aiR2Key =
-    aiFile instanceof File
-      ? `${safePart(user.userId)}/${reviewId}/full-text/${referenceId}/${id}-ai-${safeName(aiFile.name)}`
-      : file.size > MAX_AI_BYTES ? textR2Key : null;
 
   try {
-    await env.FILES.put(r2Key, await file.arrayBuffer(), {
+    await env.FILES.put(r2Key, pdfBytes, {
       httpMetadata: { contentType: 'application/pdf' },
     });
+    const storedPdf = await env.FILES.head(r2Key);
+    if (!storedPdf || storedPdf.size !== file.size)
+      throw new Error('The uploaded PDF was not stored completely.');
     await env.FILES.put(textR2Key, articleText, {
       httpMetadata: { contentType: 'text/plain; charset=utf-8' },
+      customMetadata: { pipelineVersion: FULL_TEXT_PIPELINE_VERSION },
     });
-    if (aiFile instanceof File && aiR2Key)
-      await env.FILES.put(aiR2Key, await aiFile.arrayBuffer(), {
-        httpMetadata: { contentType: 'application/pdf' },
-      });
+    const storedText = await env.FILES.head(textR2Key);
+    if (!storedText || storedText.size !== new TextEncoder().encode(articleText).byteLength)
+      throw new Error('The complete article TXT was not stored.');
     await env.DB.batch([
       env.DB.prepare(`INSERT INTO full_text_files
         (id, review_id, reference_id, owner_id, file_name, r2_key, ai_r2_key, ai_size, content_type, size, status, created_at)
@@ -166,13 +139,19 @@ export async function POST(
         user.userId,
         file.name.slice(-180),
         r2Key,
-        aiR2Key,
-        aiFile instanceof File ? aiFile.size : aiR2Key ? textSize : null,
+        null,
+        null,
         file.size,
         now,
       ),
       env.DB.prepare(
         'DELETE FROM full_text_assessments WHERE review_id = ? AND reference_id = ?',
+      ).bind(reviewId, referenceId),
+      env.DB.prepare(
+        'DELETE FROM full_text_decisions WHERE review_id = ? AND reference_id = ?',
+      ).bind(reviewId, referenceId),
+      env.DB.prepare(
+        'DELETE FROM extraction_records WHERE review_id = ? AND reference_id = ?',
       ).bind(reviewId, referenceId),
       env.DB.prepare(`UPDATE "references" SET full_text_lookup_status = 'found',
         full_text_lookup_at = ? WHERE id = ? AND review_id = ?`).bind(
@@ -188,21 +167,21 @@ export async function POST(
     console.error('Full-text upload failed', error);
     await env.FILES.delete(r2Key);
     await env.FILES.delete(textR2Key);
-    if (aiR2Key && aiR2Key !== textR2Key) await env.FILES.delete(aiR2Key);
     return Response.json(
       { error: 'The full text could not be saved. Please retry the PDF.' },
-      { status: 500 },
+      { status: 503 },
     );
   }
   if (existing?.r2Key && existing.r2Key !== r2Key) {
     try {
       await env.FILES.delete(existing.r2Key);
       await env.FILES.delete(`${existing.r2Key}.txt`);
+      await deleteLegacyFullTextSections(existing.r2Key);
     } catch (error) {
       console.error('Previous full-text cleanup failed', error);
     }
   }
-  if (existing?.aiR2Key && existing.aiR2Key !== aiR2Key) {
+  if (existing?.aiR2Key) {
     try {
       if (existing.aiR2Key !== `${existing.r2Key}.txt`)
         await env.FILES.delete(existing.aiR2Key);
@@ -216,7 +195,6 @@ export async function POST(
       referenceId,
       fileName: file.name,
       size: file.size,
-      aiSize: aiFile instanceof File ? aiFile.size : aiR2Key ? textSize : null,
       status: 'uploaded',
       createdAt: now,
     },
