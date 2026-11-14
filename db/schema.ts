@@ -12,22 +12,116 @@ export const users = sqliteTable(
     id: text('id').primaryKey(),
     email: text('email').notNull(),
     displayName: text('display_name').notNull(),
+    firstName: text('first_name'),
+    lastName: text('last_name'),
+    fieldOfStudy: text('field_of_study'),
+    educationLevel: text('education_level'),
+    emailVerifiedAt: integer('email_verified_at'),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [uniqueIndex('idx_users_email').on(table.email)],
 );
 
+export const accountCredentials = sqliteTable(
+  'account_credentials',
+  {
+    userId: text('user_id').primaryKey().references(() => users.id),
+    username: text('username').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    passwordSalt: text('password_salt').notNull(),
+    passwordIterations: integer('password_iterations').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [uniqueIndex('idx_account_credentials_username').on(table.username)],
+);
+
+export const accountSessions = sqliteTable(
+  'account_sessions',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    userId: text('user_id').notNull().references(() => users.id),
+    expiresAt: integer('expires_at').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('idx_account_sessions_user').on(table.userId)],
+);
+
+export const loginAttempts = sqliteTable('login_attempts', {
+  username: text('username').primaryKey(),
+  failures: integer('failures').notNull(),
+  windowStart: integer('window_start').notNull(),
+  blockedUntil: integer('blocked_until').notNull(),
+});
+
+export const pendingRegistrations = sqliteTable('pending_registrations', {
+  email: text('email').primaryKey(),
+  username: text('username').notNull(),
+  firstName: text('first_name').notNull(),
+  lastName: text('last_name').notNull(),
+  fieldOfStudy: text('field_of_study').notNull(),
+  educationLevel: text('education_level').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  passwordSalt: text('password_salt').notNull(),
+  passwordIterations: integer('password_iterations').notNull(),
+  codeHash: text('code_hash').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  sentAt: integer('sent_at').notNull(),
+});
+
+export const aiUsageEvents = sqliteTable('ai_usage_events', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id),
+  providerRequestId: text('provider_request_id'),
+  operation: text('operation').notNull(),
+  model: text('model').notNull(),
+  httpStatus: integer('http_status'),
+  costUsdNanos: integer('cost_usd_nanos'),
+  recordedAt: integer('recorded_at').notNull(),
+}, (table) => [
+  uniqueIndex('idx_ai_usage_provider_request').on(table.providerRequestId),
+  index('idx_ai_usage_user_recorded').on(table.userId, table.recordedAt),
+]);
+
+export const accountWallets = sqliteTable('account_wallets', {
+  userId: text('user_id').primaryKey().references(() => users.id),
+  balanceIrt: integer('balance_irt').notNull().default(0),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export const fxRateSnapshots = sqliteTable('fx_rate_snapshots', {
+  id: text('id').primaryKey(),
+  source: text('source').notNull(),
+  rateIrtMilli: integer('rate_irt_milli').notNull(),
+  sourceUpdatedAt: integer('source_updated_at').notNull(),
+  fetchedAt: integer('fetched_at').notNull(),
+  method: text('method').notNull(),
+}, (table) => [
+  uniqueIndex('idx_fx_rate_source_updated').on(table.source, table.sourceUpdatedAt),
+  index('idx_fx_rate_source_fetched').on(table.source, table.fetchedAt),
+]);
+
 export const subscriptions = sqliteTable('subscriptions', {
   userId: text('user_id')
     .primaryKey()
     .references(() => users.id),
-  plan: text('plan').notNull().default('trial'),
-  status: text('status').notNull().default('trialing'),
-  trialEndsAt: integer('trial_ends_at').notNull(),
+  plan: text('plan').notNull().default('demo'),
+  status: text('status').notNull().default('demo'),
   providerCustomerId: text('provider_customer_id'),
   providerSubscriptionId: text('provider_subscription_id'),
   updatedAt: integer('updated_at').notNull(),
 });
+
+export const demoAiUses = sqliteTable('demo_ai_uses', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id),
+  stage: text('stage').notNull(),
+  referenceId: text('reference_id').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, (table) => [
+  uniqueIndex('idx_demo_ai_uses_unique').on(table.userId, table.stage, table.referenceId),
+  index('idx_demo_ai_uses_user_stage').on(table.userId, table.stage),
+]);
 
 export const reviews = sqliteTable(
   'reviews',

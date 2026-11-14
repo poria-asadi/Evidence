@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { hasActiveAccess, requireApiUser } from '@/lib/current-user';
+import { accessPlan, demoUsage } from '@/lib/demo-access';
 import { PROMPT_VERSION } from '@/lib/llm-providers';
 import {
   ScreeningRunError,
@@ -49,7 +50,7 @@ export async function POST(
     return Response.json({ error: 'Sign in required.' }, { status: 401 });
   if (!(await hasActiveAccess(user.userId)))
     return Response.json(
-      { error: 'An active plan or trial is required to run AI screening.' },
+      { error: 'Demo or paid access is required to run AI screening.' },
       { status: 402 },
     );
   const { id } = await params;
@@ -75,6 +76,14 @@ export async function POST(
       },
       { status: 400 },
     );
+  if (await accessPlan(user.userId) === 'demo') {
+    const { titleAbstract } = await demoUsage(user.userId);
+    const remaining = Math.max(0, titleAbstract.limit - titleAbstract.used);
+    if (requestedCount > remaining)
+      return Response.json({ error: remaining
+        ? `The demo has ${remaining} new AI screening article${remaining === 1 ? '' : 's'} left. Choose a smaller batch.`
+        : 'The demo quota of 25 AI-screened articles is full.' }, { status: 402 });
+  }
   try {
     await validateScreeningRun(id, user.userId);
   } catch (error) {

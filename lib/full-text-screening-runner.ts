@@ -1,4 +1,6 @@
 import { env } from 'cloudflare:workers';
+import { UsageLedgerError } from '@/lib/openrouter-usage';
+import { claimDemoUse } from '@/lib/demo-access';
 import { normalizedPdfText } from '@/lib/searchable-pdf';
 import { ensureFullTextPrepared } from '@/lib/full-text-preparation';
 import {
@@ -119,6 +121,8 @@ export async function runFullTextAssessment({
   }
   if (normalizedPdfText(extractedText).length < 200 || extractedText.length > 300_000)
     throw new FullTextScreeningError(409, 'The extracted article text is incomplete. Prepare this PDF again.');
+  if (!(await claimDemoUse(userId, 'full_text', referenceId)))
+    throw new FullTextScreeningError(402, 'The demo includes AI screening for 5 unique full-text articles. Your demo full-text quota is full.');
   const input = {
     protocol: protocolText(review),
     title: article.title || 'Untitled article',
@@ -136,7 +140,7 @@ export async function runFullTextAssessment({
   );
   const results = await Promise.all(
     firstLine.map((provider) =>
-      runProvider(provider, () => assessFullTextWithProvider(provider, input)),
+      runProvider(provider, () => assessFullTextWithProvider(provider, input, userId)),
     ),
   );
   if (results.length) await persistResults(reviewId, referenceId, results);
@@ -168,6 +172,7 @@ export async function runFullTextAssessment({
     const adjudication = await runProvider('adjudicator', () =>
       adjudicateFullTextConflict({
         ...input,
+        userId,
         assessments: assessments as Record<
           PrimaryProviderId,
           ScreeningAssessment
@@ -204,7 +209,9 @@ async function runProvider(
       };
     } catch (error) {
       errorCode =
-        error instanceof ProviderError
+        error instanceof UsageLedgerError
+          ? 'usage_ledger_unavailable'
+          : error instanceof ProviderError
           ? error.code
           : error instanceof DOMException && error.name === 'TimeoutError'
             ? 'provider_timeout'

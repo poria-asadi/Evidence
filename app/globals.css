@@ -48,8 +48,13 @@
 @layer base {
   * { @apply border-border outline-ring/50; }
   html { @apply font-sans; }
+  html:has(.landing-page) { scroll-behavior: smooth; }
   body { @apply bg-background text-foreground; font-size: 16px; background-image: radial-gradient(circle at 80% 0%, oklch(.9 .08 290 / .38), transparent 28rem), radial-gradient(circle at 55% 55%, oklch(.93 .06 190 / .22), transparent 34rem); background-attachment: fixed; }
   input, textarea, button { font: inherit; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.landing-page) { scroll-behavior: auto; }
 }
 
 @layer components {

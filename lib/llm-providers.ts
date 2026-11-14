@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { trackedOpenRouterFetch, type UsageContext } from '@/lib/openrouter-usage';
 
 export type ScreeningDecision = 'include' | 'exclude' | 'unclear';
 export type ScreeningAssessment = {
@@ -139,13 +140,15 @@ export function getFullTextProviderReadiness() {
 export async function assessWithProvider(
   provider: PrimaryProviderId,
   input: { protocol: string; title: string; abstract: string | null },
+  userId: string,
 ) {
   const model = modelForProvider(provider);
   if (!model) throw new ProviderError('provider_not_configured');
-  return requestOpenRouter(model, SYSTEM, screeningInput(input));
+  return requestOpenRouter(model, SYSTEM, screeningInput(input), { userId, operation: 'title_abstract' });
 }
 
 export async function adjudicateConflict(input: {
+  userId: string;
   protocol: string;
   title: string;
   abstract: string | null;
@@ -158,7 +161,7 @@ export async function adjudicateConflict(input: {
     env.OPENROUTER_ADJUDICATOR_MODEL,
     ADJUDICATION_SYSTEM,
     prompt,
-    { preserveReason: true, binaryDecision: true },
+    { preserveReason: true, binaryDecision: true, userId: input.userId, operation: 'adjudication' },
   );
 }
 
@@ -169,16 +172,20 @@ export async function assessFullTextWithProvider(
     title: string;
     fullText: string;
   },
+  userId: string,
 ) {
   const model = modelForProvider(provider);
   if (!model) throw new ProviderError('provider_not_configured');
   return requestOpenRouter(model, FULL_TEXT_SYSTEM, fullTextContent(input), {
     pdf: false,
     timeoutMs: FULL_TEXT_REQUEST_TIMEOUT_MS,
+    userId,
+    operation: 'full_text',
   });
 }
 
 export async function adjudicateFullTextConflict(input: {
+  userId: string;
   protocol: string;
   title: string;
   fullText: string;
@@ -193,6 +200,8 @@ export async function adjudicateFullTextConflict(input: {
     {
       pdf: false,
       preserveReason: true,
+      userId: input.userId,
+      operation: 'adjudication',
       binaryDecision: true,
       timeoutMs: FULL_TEXT_REQUEST_TIMEOUT_MS,
     },
@@ -223,7 +232,9 @@ async function requestOpenRouter(
     preserveReason?: boolean;
     binaryDecision?: boolean;
     timeoutMs?: number | null;
-  } = {},
+    userId: string;
+    operation: UsageContext['operation'];
+  },
 ): Promise<ProviderResult> {
   if (!env.OPENROUTER_API_KEY)
     throw new ProviderError('provider_not_configured');
@@ -242,6 +253,8 @@ async function requestOpenRouter(
     baseUrl,
     {
       model,
+      user: options.userId,
+      usage: { include: true },
       messages,
       max_tokens: 900,
       ...(plugins ? { plugins } : {}),
@@ -255,13 +268,16 @@ async function requestOpenRouter(
       },
       provider: { require_parameters: true },
     },
-    options.timeoutMs,
+    options.timeoutMs === undefined ? 90_000 : options.timeoutMs,
+    { userId: options.userId, operation: options.operation, model },
   );
   if (response.status === 400 || response.status === 422) {
     response = await openRouterRequest(
       baseUrl,
       {
         model,
+        user: options.userId,
+        usage: { include: true },
         messages: [
           {
             role: 'system',
@@ -272,7 +288,8 @@ async function requestOpenRouter(
         max_tokens: 900,
         ...(plugins ? { plugins } : {}),
       },
-      options.timeoutMs,
+      options.timeoutMs === undefined ? 90_000 : options.timeoutMs,
+      { userId: options.userId, operation: options.operation, model },
     );
   }
   const data = (await response.json()) as OpenRouterResponse;
@@ -290,9 +307,10 @@ async function requestOpenRouter(
 function openRouterRequest(
   baseUrl: string,
   body: Record<string, unknown>,
-  timeoutMs: number | null = 90_000,
+  timeoutMs: number | null,
+  usageContext: UsageContext,
 ) {
-  return fetch(`${baseUrl}/chat/completions`, {
+  return trackedOpenRouterFetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     ...(timeoutMs === null ? {} : { signal: AbortSignal.timeout(timeoutMs) }),
     headers: {
@@ -304,7 +322,7 @@ function openRouterRequest(
       'X-OpenRouter-Title': 'EvidenceFlow',
     },
     body: JSON.stringify(body),
-  });
+  }, usageContext);
 }
 
 function screeningInput(input: {

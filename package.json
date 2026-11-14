@@ -18,6 +18,8 @@
     "test:extraction-reconciliation": "node --experimental-strip-types scripts/verify-extraction-reconciliation.mts",
     "test:extraction-year": "node --experimental-strip-types scripts/verify-extraction-year.mts",
     "test:pdf-to-text": "node --experimental-strip-types scripts/verify-pdf-to-text.mts",
+    "test:usage-pricing": "node --experimental-strip-types scripts/verify-usage-pricing.mts",
+    "test:fx-rates": "node --experimental-strip-types scripts/verify-fx-rates.mts",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

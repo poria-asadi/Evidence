@@ -33,7 +33,7 @@ export async function PATCH(
     if (!(await hasActiveAccess(user.userId)))
       return Response.json(
         {
-          error: 'An active plan or trial is required to resume AI screening.',
+          error: 'Demo or paid access is required to resume AI screening.',
         },
         { status: 402 },
       );

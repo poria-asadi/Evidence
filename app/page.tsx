@@ -1,6 +1,5 @@
 // vinext's next/link shim throws on RSC prefetch, so pages link with plain anchors.
 // oxlint-disable nextjs/no-html-link-for-pages
-import { redirect } from 'next/navigation';
 import {
   ArrowRight,
   BookOpenCheck,
@@ -12,7 +11,6 @@ import {
   FileText,
   Fingerprint,
   Gavel,
-  KeyRound,
   Layers,
   ListChecks,
   Quote,
@@ -26,17 +24,13 @@ import {
 } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { getChatGPTUser } from './chatgpt-auth';
-
-export const dynamic = 'force-dynamic';
 
 const SIGN_IN = '/sign-in';
+const SIGN_UP = '/sign-up';
 
-export default async function LandingPage() {
-  const user = await getChatGPTUser();
-  if (user) redirect('/workspace');
+export default function LandingPage() {
   return (
-    <div className="min-h-screen overflow-x-clip">
+    <div className="landing-page min-h-screen overflow-x-clip">
       <SiteHeader />
       <main>
         <Hero />
@@ -65,7 +59,7 @@ function Logo() {
 function PrimaryCta({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
     <a
-      href={SIGN_IN}
+      href={SIGN_UP}
       className={cn(
         buttonVariants(),
         'h-12 gap-2 rounded-xl px-5 text-[15px] font-semibold shadow-[0_10px_30px_oklch(.53_.21_284/.28)]',
@@ -97,8 +91,8 @@ function SiteHeader() {
           <a href={SIGN_IN} className={cn(buttonVariants({ variant: 'ghost' }), 'hidden h-10 px-3 sm:inline-flex')}>
             Sign in
           </a>
-          <a href={SIGN_IN} className={cn(buttonVariants(), 'h-10 rounded-xl px-4 font-semibold')}>
-            Start free trial
+          <a href={SIGN_UP} className={cn(buttonVariants(), 'h-10 rounded-xl px-4 font-semibold')}>
+            Start free demo
           </a>
         </div>
       </div>
@@ -133,7 +127,7 @@ function Hero() {
         </p>
         <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
           <PrimaryCta>
-            Start your 14-day free trial <ArrowRight className="size-4" />
+            Start your free demo <ArrowRight className="size-4" />
           </PrimaryCta>
           <a
             href="#how-it-works"
@@ -142,9 +136,6 @@ function Hero() {
             See how it works
           </a>
         </div>
-        <p className="mt-5 text-sm text-muted-foreground">
-          Sign in with your ChatGPT account. No new password to create.
-        </p>
       </div>
       <HeroMockup />
     </section>
@@ -154,9 +145,9 @@ function Hero() {
 const STAGES = ['Protocol', 'Import', 'Screening', 'Full text', 'Extraction'];
 
 const VOTES = [
-  { name: 'Reviewer 1', decision: 'Include', confidence: 92 },
-  { name: 'Reviewer 2', decision: 'Include', confidence: 87 },
-  { name: 'Reviewer 3', decision: 'Unclear', confidence: 58 },
+  { name: 'Detective 1', decision: 'Included' },
+  { name: 'Detective 2', decision: 'Excluded' },
+  { name: 'Detective 3', decision: 'Needs your decision' },
 ];
 
 function HeroMockup() {
@@ -224,33 +215,24 @@ function HeroMockup() {
 
             <div className="mt-4 grid gap-2">
               {VOTES.map((vote) => (
-                <div key={vote.name} className="grid grid-cols-[5.5rem_4.5rem_1fr_2.25rem] items-center gap-2 text-xs">
+                <div key={vote.name} className="flex items-center justify-between gap-3 text-xs">
                   <span className="text-muted-foreground">{vote.name}</span>
                   <span
                     className={cn(
                       'font-semibold',
-                      vote.decision === 'Include' ? 'text-[var(--success-ink)]' : 'text-[oklch(.5_.11_70)]',
+                      vote.decision === 'Included' ? 'text-[var(--success-ink)]' :
+                        vote.decision === 'Excluded' ? 'text-destructive' : 'text-[oklch(.5_.11_70)]',
                     )}
                   >
                     {vote.decision}
                   </span>
-                  <span className="h-1.5 overflow-hidden rounded-full bg-muted">
-                    <span
-                      className={cn(
-                        'block h-full rounded-full',
-                        vote.decision === 'Include' ? 'bg-[var(--success)]' : 'bg-[oklch(.75_.14_75)]',
-                      )}
-                      style={{ width: `${vote.confidence}%` }}
-                    />
-                  </span>
-                  <span className="text-right text-muted-foreground tabular-nums">{vote.confidence}%</span>
                 </div>
               ))}
             </div>
 
             <div className="mt-4 rounded-xl bg-[var(--info-soft)] p-3 text-xs leading-5 text-[var(--info-ink)]">
-              <span className="font-semibold">Why “Unclear”: </span>
-              the abstract doesn’t state whether pain lasted more than 12 weeks.
+              <span className="font-semibold">Why it needs your decision: </span>
+              the detectives disagree, and the abstract doesn’t state whether pain lasted more than 12 weeks.
             </div>
 
             <div className="mt-4 flex gap-2">
@@ -340,13 +322,13 @@ const WORKFLOW = [
   {
     icon: FileStack,
     title: 'Import & deduplicate',
-    body: 'Upload exports from PubMed, Scopus, Web of Science and Embase, up to 25,000 records at a time. Likely duplicate pairs are found for you to confirm, and the records you keep download as RIS.',
+    body: 'Upload exports from PubMed, Scopus, Web of Science and Embase. Likely duplicate pairs are found for you to confirm, and the records you keep download as RIS.',
     tags: ['RIS', 'PubMed NBIB', 'CSV', 'TXT'],
   },
   {
     icon: ListChecks,
     title: 'Title & abstract screening',
-    body: 'Three AI reviewers assess each record independently. Each gives a decision, a confidence score, the criteria it matched and a short reason. Disagreements go to an adjudicator and are flagged for your decision.',
+    body: 'Three AI detectives assess each record independently. Each gives a decision, the criteria it matched and a short reason. You can request an adjudicator for conflicts, while the final decision stays with you.',
     tags: ['3 independent votes', 'Conflict adjudication'],
   },
   {
@@ -358,7 +340,7 @@ const WORKFLOW = [
   {
     icon: Sheet,
     title: 'Data extraction',
-    body: 'Bring your own column sheet or build one in the app. Two models extract every value independently, each with the passage it came from, and risky cells are flagged before you export.',
+    body: 'Bring your own column sheet or build one in the app. One AI detective, Sherlock, extracts the requested values from each included article and shows supporting passages when available. Missing or uncertain values are flagged for your review before export.',
     tags: ['CSV', 'XLSX', 'Evidence excerpts'],
   },
 ];
@@ -404,17 +386,17 @@ const OVERSIGHT = [
   {
     icon: Users,
     title: 'Independent votes',
-    body: 'Three AI reviewers assess each record separately, so one model’s mistake doesn’t quietly become the answer.',
+    body: 'Three AI detectives assess each record separately, so one model’s mistake doesn’t quietly become the answer.',
   },
   {
     icon: Gavel,
     title: 'Conflicts are surfaced, not hidden',
-    body: 'When the reviewers disagree, an adjudicator weighs in and the record is flagged for you instead of being settled silently.',
+    body: 'When the detectives disagree, the record is flagged for your decision. You can request an adjudicator’s second opinion.',
   },
   {
     icon: Quote,
     title: 'Reasons and evidence attached',
-    body: 'Every suggestion lists the criteria it matched and what was missing. Every extracted value carries the passage it came from.',
+    body: 'Screening suggestions list matched criteria and missing information. Extracted values show supporting passages when available, and gaps are flagged for review.',
   },
   {
     icon: UserCheck,
@@ -458,11 +440,11 @@ function ExtractionMockup() {
           </span>
           <div>
             <p className="text-sm font-semibold">Data extraction</p>
-            <p className="text-xs text-muted-foreground">Study 7 of 42 · 18 columns</p>
+            <p className="text-xs text-muted-foreground">Study 7 of 42 · Extracted by Sherlock</p>
           </div>
         </div>
         <span className="inline-flex items-center gap-1 rounded-full bg-[oklch(.95_.06_85)] px-2.5 py-1 text-[11px] font-semibold text-[oklch(.45_.1_70)]">
-          <TriangleAlert className="size-3" /> 1 cell to check
+          <TriangleAlert className="size-3" /> 1 field to review
         </span>
       </div>
       <div className="divide-y text-sm">
@@ -478,35 +460,20 @@ function ExtractionMockup() {
             </span>
           </div>
         ))}
-        <div className="bg-[oklch(.985_.02_85)] px-5 py-4">
+        <div className="px-5 py-4">
           <div className="flex items-center justify-between gap-4">
             <span className="font-semibold">Sample size</span>
-            <span className="text-xs font-semibold text-[oklch(.45_.1_70)]">Models disagree</span>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {[
-              ['Model A', '128'],
-              ['Model B', '126'],
-            ].map(([model, value]) => (
-              <div key={model} className="rounded-lg border bg-card px-3 py-2">
-                <p className="text-[11px] text-muted-foreground">{model}</p>
-                <p className="font-semibold tabular-nums">{value}</p>
-              </div>
-            ))}
+            <span className="flex items-center gap-1.5 font-semibold tabular-nums">
+              128
+              <Check className="size-3.5 text-[var(--success)]" />
+            </span>
           </div>
           <div className="mt-3 flex gap-2 rounded-lg border-l-2 border-primary bg-card px-3 py-2.5 text-xs leading-5 text-muted-foreground">
             <Quote className="mt-0.5 size-3.5 shrink-0 text-primary" />
             <span>
               “Of the 128 participants randomised, 126 completed the 12-week follow-up…”
-              <span className="mt-1 block font-medium text-foreground/70">Results, paragraph 1</span>
+              <span className="mt-1 block font-medium text-foreground/70">Supporting passage · Results, paragraph 1</span>
             </span>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {['Model disagreement', 'Numeric value'].map((reason) => (
-              <span key={reason} className="rounded-md bg-[oklch(.94_.05_85)] px-2 py-0.5 text-[11px] font-medium text-[oklch(.42_.09_70)]">
-                {reason}
-              </span>
-            ))}
           </div>
         </div>
         <div className="flex items-center justify-between gap-4 px-5 py-3">
@@ -514,6 +481,13 @@ function ExtractionMockup() {
           <span className="flex items-center gap-1.5 font-medium">
             12 weeks
             <Check className="size-3.5 text-[var(--success)]" />
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-4 bg-[oklch(.985_.02_85)] px-5 py-3">
+          <span className="text-muted-foreground">Adverse events</span>
+          <span className="text-right">
+            <span className="font-semibold">NR</span>
+            <span className="ml-2 text-xs font-medium text-[oklch(.45_.1_70)]">Needs review</span>
           </span>
         </div>
       </div>
@@ -526,11 +500,6 @@ const PRIVACY = [
     icon: Fingerprint,
     title: 'A private workspace per researcher',
     body: 'Your reviews, uploads and progress belong to your account, and you can pick up exactly where you left off.',
-  },
-  {
-    icon: KeyRound,
-    title: 'No password stored',
-    body: 'You sign in with your ChatGPT account. EvidenceFlow never receives or stores your username or password.',
   },
   {
     icon: ScanSearch,
@@ -549,7 +518,7 @@ function Privacy() {
     <section id="privacy" className="scroll-mt-20">
       <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:py-28">
         <SectionIntro eyebrow="Privacy & control" title="Built for transparent, reproducible evidence work." center />
-        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {PRIVACY.map(({ icon: Icon, title, body }) => (
             <div key={title} className="rounded-2xl border bg-card p-6">
               <Icon className="size-5 text-primary" />
@@ -573,16 +542,13 @@ function FinalCta() {
           <h2 className="mx-auto mt-5 max-w-2xl text-3xl leading-tight font-semibold tracking-[-.035em] text-balance sm:text-4xl">
             Start your next review with a clear trail from the first record.
           </h2>
-          <p className="mx-auto mt-4 max-w-xl text-lg leading-8 text-white/75">
-            Every new researcher gets a 14-day free trial with the full workflow.
-          </p>
           <a
-            href={SIGN_IN}
+            href={SIGN_UP}
             className="mt-9 inline-flex h-12 items-center gap-2 rounded-xl bg-white px-6 text-[15px] font-semibold text-[oklch(.3_.14_284)] shadow-[0_12px_30px_oklch(.1_.05_270/.35)] transition hover:bg-white/90 focus-visible:ring-3 focus-visible:ring-white/60 focus-visible:outline-none"
           >
-            Start free trial <ArrowRight className="size-4" />
+            Start free demo <ArrowRight className="size-4" />
           </a>
-          <p className="mt-4 text-sm text-white/60">Sign in with ChatGPT · No new password to create</p>
+          <p className="mt-4 text-sm text-white/60">Verify your email to begin your demo</p>
         </div>
       </div>
     </section>

@@ -42,7 +42,7 @@ export async function POST(
     return Response.json({ error: 'Sign in required.' }, { status: 401 });
   if (!(await hasActiveAccess(user.userId)))
     return Response.json(
-      { error: 'Charge your account before adding full-text files.' },
+      { error: 'Demo or paid access is required for full-text files.' },
       { status: 402 },
     );
 

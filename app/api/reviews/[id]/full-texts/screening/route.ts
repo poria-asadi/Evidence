@@ -67,7 +67,7 @@ export async function POST(
     return Response.json({ error: 'Sign in required.' }, { status: 401 });
   if (!(await hasActiveAccess(user.userId)))
     return Response.json(
-      { error: 'Charge your account before running full-text screening.' },
+      { error: 'Demo or paid access is required for full-text screening.' },
       { status: 402 },
     );
   const { id } = await params;
@@ -78,7 +78,7 @@ export async function POST(
   };
   if (!body.costConfirmed)
     return Response.json(
-      { error: 'Confirm the account charge before starting screening.' },
+      { error: 'Confirm the AI screening run before starting.' },
       { status: 400 },
     );
   if (!body.referenceId)

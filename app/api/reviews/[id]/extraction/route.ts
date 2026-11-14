@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { hasActiveAccess, requireApiUser } from '@/lib/current-user';
+import { claimDemoUse } from '@/lib/demo-access';
 import { analyzeExtractionSheet, extractArticle, extractionProviderReady, type ColumnPlan, type ExtractedCell } from '@/lib/extraction-ai';
 import { includedFullTexts } from '@/lib/extraction-data';
 import { readPreparedFullText } from '@/lib/full-text-preparation';
@@ -90,7 +91,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const user = await requireApiUser();
   if (!user) return Response.json({ error: 'Sign in required.' }, { status: 401 });
   if (!(await hasActiveAccess(user.userId)))
-    return Response.json({ error: 'An active plan or trial is required for data extraction.' }, { status: 402 });
+    return Response.json({ error: 'Demo or paid access is required for data extraction.' }, { status: 402 });
   const { id } = await params;
   const review = await ownedReview(id, user.userId);
   if (!review) return Response.json({ error: 'Review not found.' }, { status: 404 });
@@ -152,7 +153,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       for (const provider of selected) {
         try {
           plans[provider] = await analyzeExtractionSheet({
-            headers, preview: JSON.parse(template.previewJson) as string[][], pico,
+            userId: user.userId, headers, preview: JSON.parse(template.previewJson) as string[][], pico,
             guidance: readColumnGuidance(template.schemaJson),
           }, provider);
         } catch (error) {
@@ -190,11 +191,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
   if (normalizedPdfText(articleText).length < 200 || articleText.length > 300_000)
     return Response.json({ error: 'This article needs a readable full text of 200–300,000 characters.' }, { status: 422 });
+  if (!(await claimDemoUse(user.userId, 'extraction', article.id)))
+    return Response.json({ error: 'The demo includes AI extraction for one unique article. Your demo extraction quota is full.' }, { status: 402 });
   try {
     const cacheKey = (model: 'haiku' | 'luna') =>
       `${article.r2Key}.extraction-${template.updatedAt}-${EXTRACTION_PIPELINE_VERSION}-${model}.json`;
     const cells = await extractArticle({
-      provider, columns, pico,
+      userId: user.userId, provider, columns, pico,
       citation: { title: article.title, authors: article.authors, year: article.year,
         journal: article.journal, doi: article.doi, pmid: article.pmid },
       articleText,

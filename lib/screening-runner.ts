@@ -1,4 +1,6 @@
 import { env } from 'cloudflare:workers';
+import { UsageLedgerError } from '@/lib/openrouter-usage';
+import { claimDemoUse } from '@/lib/demo-access';
 import {
   adjudicateConflict,
   assessWithProvider,
@@ -95,6 +97,8 @@ export async function runReferenceAssessment({
       404,
       'Reference not found in the deduplicated library.',
     );
+  if (!(await claimDemoUse(userId, 'title_abstract', referenceId)))
+    throw new ScreeningRunError(402, 'The demo includes AI screening for 25 unique articles. Your demo screening quota is full.');
   const input = {
     protocol: protocolText(review),
     title: reference.title || 'Untitled reference',
@@ -111,7 +115,7 @@ export async function runReferenceAssessment({
   );
   const results = await Promise.all(
     primaryProviders.map((provider) =>
-      runProvider(provider, () => assessWithProvider(provider, input)),
+      runProvider(provider, () => assessWithProvider(provider, input, userId)),
     ),
   );
   if (results.length) await persistResults(reviewId, reference.id, results);
@@ -142,6 +146,7 @@ export async function runReferenceAssessment({
       const adjudication = await runProvider('adjudicator', () =>
         adjudicateConflict({
           ...input,
+          userId,
           assessments: assessments as Record<
             PrimaryProviderId,
             ScreeningAssessment
@@ -178,7 +183,9 @@ async function runProvider(
       };
     } catch (error) {
       errorCode =
-        error instanceof ProviderError
+        error instanceof UsageLedgerError
+          ? 'usage_ledger_unavailable'
+          : error instanceof ProviderError
           ? error.code
           : error instanceof DOMException && error.name === 'TimeoutError'
             ? 'provider_timeout'

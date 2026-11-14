@@ -24,7 +24,7 @@ export async function POST(
     return Response.json({ error: 'Sign in required.' }, { status: 401 });
   if (!(await hasActiveAccess(user.userId)))
     return Response.json(
-      { error: 'An active plan or trial is required to run AI screening.' },
+      { error: 'Demo or paid access is required to run AI screening.' },
       { status: 402 },
     );
   const { id, jobId } = await params;
@@ -102,8 +102,12 @@ export async function POST(
       },
     });
   } catch (error) {
-    if (error instanceof ScreeningRunError)
+    if (error instanceof ScreeningRunError) {
+      if (error.status === 402)
+        await env.DB.prepare("UPDATE screening_jobs SET status = 'cancelled', current_reference_id = NULL, updated_at = ? WHERE id = ? AND status = 'running'")
+          .bind(Date.now(), jobId).run();
       return Response.json({ error: error.message }, { status: error.status });
+    }
     await env.DB.prepare(
       "UPDATE screening_jobs SET failed_count = failed_count + 1, updated_at = ? WHERE id = ? AND status = 'running'",
     )

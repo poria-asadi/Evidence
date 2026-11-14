@@ -10,8 +10,9 @@ declare namespace Cloudflare {
     OPENROUTER_ADJUDICATOR_MODEL?: string;
     OPENROUTER_FULLTEXT_ADJUDICATOR_MODEL?: string;
     APP_PUBLIC_URL?: string;
-    LOCAL_DEV_AUTH?: string;
-    LOCAL_DEV_USER_ID?: string;
-    LOCAL_DEV_USER_EMAIL?: string;
+    RESEND_API_KEY?: string;
+    VERIFICATION_EMAIL_FROM?: string;
+    AUTH_CODE_SECRET?: string;
+    NETARZ_FX_API_KEY?: string;
   }
 }

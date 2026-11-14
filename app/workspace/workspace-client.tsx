@@ -50,6 +50,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import DemoQuotaNotice, { notifyDemoUsageChanged } from '@/components/demo-quota-notice';
 import ExtractionStep from './extraction-step';
 
 type Draft = {
@@ -306,7 +307,7 @@ const stages = [
 export default function WorkspaceClient({
   user,
 }: {
-  user: { name: string; email: string };
+  user: { name: string; username: string };
 }) {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [draft, setDraft] = useState<Draft>(blank);
@@ -330,7 +331,6 @@ export default function WorkspaceClient({
   const [subscription, setSubscription] = useState<{
     plan: string;
     status: string;
-    trialEndsAt: number;
   } | null>(null);
   const [showBilling, setShowBilling] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -431,9 +431,6 @@ export default function WorkspaceClient({
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
-  const trialDays = subscription
-    ? Math.max(0, Math.ceil((subscription.trialEndsAt - Date.now()) / 86400000))
-    : 14;
   const fullTextCriteriaDirty =
     fullTextCriteria.useTiabCriteria !==
       fullTextCriteriaDraft.useTiabCriteria ||
@@ -539,7 +536,6 @@ export default function WorkspaceClient({
         subscription: {
           plan: string;
           status: string;
-          trialEndsAt: number;
         };
       };
       setReviews(data.reviews);
@@ -594,6 +590,11 @@ export default function WorkspaceClient({
     setNavOpen(false);
   }
   function startNew() {
+    if (subscription?.status !== 'active' && reviews.length > 0) {
+      setError('The free demo includes one review. Continue your existing review.');
+      setNavOpen(false);
+      return;
+    }
     setActiveId(null);
     setDraft(blank);
     setStep(1);
@@ -1001,6 +1002,7 @@ export default function WorkspaceClient({
     } finally {
       setBatchRunning(false);
       await loadScreening(activeId, screeningFilter, screeningPage);
+      notifyDemoUsageChanged();
     }
   }
 
@@ -1356,6 +1358,7 @@ export default function WorkspaceClient({
       return 'fatal';
     } finally {
       setFullTextRunningId(null);
+      notifyDemoUsageChanged();
     }
   }
 
@@ -1582,6 +1585,7 @@ export default function WorkspaceClient({
       );
     } finally {
       setAiRunningId(null);
+      notifyDemoUsageChanged();
     }
   }
 
@@ -1625,6 +1629,7 @@ export default function WorkspaceClient({
       );
     } finally {
       setAiRunningId(null);
+      notifyDemoUsageChanged();
     }
   }
 
@@ -1682,10 +1687,13 @@ export default function WorkspaceClient({
               </div>
               <Button
                 onClick={startNew}
+                disabled={subscription?.status !== 'active' && reviews.length > 0}
                 className="mt-5 h-11 w-full justify-start shadow-lg shadow-primary/15"
               >
                 <Plus /> New review
               </Button>
+              {subscription?.status !== 'active' && reviews.length > 0 &&
+                <p className="mt-2 px-1 text-xs text-muted-foreground">Your demo includes one review. Continue it below.</p>}
               <div className="relative mt-4">
                 <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <input
@@ -1734,15 +1742,15 @@ export default function WorkspaceClient({
                   <Sparkles className="size-4 text-primary" />
                   <span className="text-sm font-semibold">
                     {subscription?.status === 'active'
-                      ? 'Pro plan'
-                      : `${trialDays} trial days left`}
+                      ? 'Active access'
+                      : 'Free demo · one review'}
                   </span>
                 </div>
                 <button
                   onClick={() => setShowBilling(true)}
                   className="mt-2 text-xs font-medium text-primary hover:underline"
                 >
-                  Manage plan →
+                  Access & credits →
                 </button>
               </div>
               <div className="mt-3 flex items-center gap-3 border-t px-1 pt-4">
@@ -1751,19 +1759,17 @@ export default function WorkspaceClient({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">
-                    {user.name}
+                    @{user.username}
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {user.email}
+                    Researcher account
                   </span>
                 </span>
-                <a
-                  href="/signout-with-chatgpt?return_to=/"
-                  target="_top"
-                  aria-label="Sign out"
-                >
-                  <LogOut className="size-4 text-muted-foreground" />
-                </a>
+                <form action="/api/auth/sign-out" method="post">
+                  <button type="submit" aria-label="Sign out">
+                    <LogOut className="size-4 text-muted-foreground" />
+                  </button>
+                </form>
               </div>
             </div>
           </div>
@@ -1969,7 +1975,7 @@ export default function WorkspaceClient({
           </div>
         </section>
       </div>
-      {showBilling && <BillingDialog close={() => setShowBilling(false)} />}
+      {showBilling && <BillingDialog close={() => setShowBilling(false)} isDemo={subscription?.status !== 'active'} />}
     </main>
   );
 }
@@ -2753,6 +2759,7 @@ function ScreeningSetup({
           <Summary label="Conflicts" value={summary.conflicts} />
         </div>
       </div>
+      <DemoQuotaNotice stage="titleAbstract" />
       {unresolvedDuplicates > 0 && (
         <div className="mb-5 flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           <AlertTriangle className="size-5 shrink-0" />
@@ -2935,7 +2942,7 @@ function ScreeningSetup({
                           className="mt-0.5"
                         />
                         <span>
-                          <strong>I understand this charges my account.</strong>
+                          <strong>I understand this uses AI screening capacity.</strong>
                         </span>
                       </label>
                       <Button
@@ -2973,7 +2980,7 @@ function ScreeningSetup({
                     variant="outline"
                     className="border-primary/25 bg-card"
                   >
-                    Optional · account charge
+                    Optional · uses AI allowance
                   </Badge>
                 </div>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
@@ -3620,6 +3627,7 @@ function FullTextStep({
           Return to title and abstract
         </Button>
       </div>
+      <DemoQuotaNotice stage="fullText" />
 
       <nav aria-label="Full-text sections" className="mb-5 flex gap-2 overflow-x-auto pb-1 text-sm [scrollbar-width:thin]">
         <a href="#fulltext-criteria" className="shrink-0 rounded-xl border bg-card px-3 py-2 font-medium text-primary">Criteria</a>
@@ -3647,7 +3655,7 @@ function FullTextStep({
             </p>
             <p className="mt-1 text-sm leading-6 text-violet-800">
               You can return to Step 3 for a researcher decision or request a
-              Sherlock Holmes opinion charged to your account.
+              Sherlock Holmes opinion for this article. It does not consume another demo article slot.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {unresolvedConflict && (
@@ -3945,12 +3953,12 @@ function FullTextStep({
         <div className="mt-5 rounded-2xl border border-primary/20 bg-primary/5 p-4">
           <div className="flex items-start gap-3 text-sm">
             <Checkbox
-              aria-label="Confirm account charge for full-text screening"
+              aria-label="Confirm AI allowance for full-text screening"
               checked={costConfirmed}
               onCheckedChange={(checked) => setCostConfirmed(checked === true)}
             />
             <span className="font-medium">
-              I understand this charges my account
+              I understand this uses AI screening capacity
             </span>
           </div>
           {batchProgress && (
@@ -4854,7 +4862,32 @@ function formatBytes(bytes: number) {
       : `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-function BillingDialog({ close }: { close: () => void }) {
+function BillingDialog({ close, isDemo }: { close: () => void; isDemo: boolean }) {
+  const [usage, setUsage] = useState<{
+    balanceIrt: number; requestCount: number; unpricedCount: number; costUsdNanos: number;
+    demo: { titleAbstract: { used: number; limit: number }; fullText: { used: number; limit: number }; extraction: { used: number; limit: number } };
+  } | null>(null);
+  const [fx, setFx] = useState<{
+    primary: { rateIrtPerUsd: number; sourceUpdatedAt: string; attributionUrl: string };
+    comparison: { status: string; rateIrtPerUsd?: number; differencePercent?: number };
+    comparisonWarning: boolean;
+  } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/account/usage', { signal: controller.signal, cache: 'no-store' })
+      .then((response) => response.ok ? response.json() as Promise<{
+        balanceIrt: number; requestCount: number; unpricedCount: number; costUsdNanos: number;
+        demo: { titleAbstract: { used: number; limit: number }; fullText: { used: number; limit: number }; extraction: { used: number; limit: number } };
+      }> : null)
+      .then((value) => { if (value) setUsage(value); })
+      .catch(() => undefined);
+    fetch('/api/fx/usd-irt', { signal: controller.signal, cache: 'no-store' })
+      .then((response) => response.ok ? response.json() as Promise<NonNullable<typeof fx>> : null)
+      .then((value) => { if (value) setFx(value); })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+  const number = new Intl.NumberFormat('en-US');
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 p-4 backdrop-blur-sm"
@@ -4869,11 +4902,11 @@ function BillingDialog({ close }: { close: () => void }) {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 id="billing-title" className="text-lg font-semibold">
-              EvidenceFlow Pro
+              Access & credits
             </h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Billing is prepared as a 14-day trial gate. A payment provider
-              must be connected before real charges can be collected.
+              {isDemo ? 'Your free demo includes one review, AI screening for 25 abstracts and 5 PDFs, and AI extraction for 1 article. ' : ''}
+              The planned paid rate is OpenRouter cost plus 20%, converted to IRT using a recorded USD rate.
             </p>
           </div>
           <button onClick={close} aria-label="Close billing">
@@ -4881,16 +4914,35 @@ function BillingDialog({ close }: { close: () => void }) {
           </button>
         </div>
         <div className="mt-5 rounded-xl border bg-muted/35 p-5">
+          {isDemo && usage?.demo && <div className="mb-4 border-b pb-4 text-sm text-muted-foreground">
+            <p className="font-semibold text-foreground">Demo AI use</p>
+            <p className="mt-2">Title & abstract: {number.format(usage.demo.titleAbstract.used)} / {usage.demo.titleAbstract.limit} articles</p>
+            <p className="mt-1">Full text: {number.format(usage.demo.fullText.used)} / {usage.demo.fullText.limit} PDFs</p>
+            <p className="mt-1">Extraction: {number.format(usage.demo.extraction.used)} / {usage.demo.extraction.limit} article</p>
+          </div>}
+          <p className="text-sm text-muted-foreground">Paid credit balance</p>
+          <p className="mt-1 font-sans text-3xl font-semibold tabular-nums" dir="ltr">
+            {usage ? number.format(usage.balanceIrt) : '—'} <span className="text-base font-medium">IRT</span>
+          </p>
+          <div className="mt-4 border-t pt-4 text-sm text-muted-foreground">
+            <p>OpenRouter requests: <span className="font-medium text-foreground tabular-nums">{usage ? number.format(usage.requestCount) : '—'}</span></p>
+            <p className="mt-1">Measured provider cost: <span className="font-medium text-foreground tabular-nums">{usage ? `$${(usage.costUsdNanos / 1_000_000_000).toFixed(6)}` : '—'}</span></p>
+            {Boolean(usage?.unpricedCount) && <p className="mt-1 text-amber-700">{number.format(usage!.unpricedCount)} request(s) have no confirmed cost yet.</p>}
+          </div>
+          <div className="mt-4 border-t pt-4 text-sm text-muted-foreground">
+            <p>Reference USD rate: <span className="font-medium text-foreground tabular-nums" dir="ltr">{fx ? `${number.format(fx.primary.rateIrtPerUsd)} IRT / USD` : 'Unavailable'}</span></p>
+            {fx && <p className="mt-1">Source: <a href={fx.primary.attributionUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline">NerkhAra</a> · Updated {new Date(fx.primary.sourceUpdatedAt).toLocaleString('en-US', { timeZone: 'Asia/Tehran' })} Tehran time</p>}
+            {fx?.comparison.status === 'available' && <p className="mt-1">NetArz comparison: <span className="tabular-nums">{number.format(fx.comparison.rateIrtPerUsd!)} IRT / USD</span> ({fx.comparison.differencePercent}% difference)</p>}
+            {fx?.comparisonWarning && <p className="mt-1 text-amber-700">Comparison rate needs attention; paid charges remain disabled.</p>}
+          </div>
+        </div>
+        <div className="mt-4 rounded-xl border bg-muted/35 p-5">
           <div className="flex items-start justify-between">
             <div>
-              <p className="font-semibold">Pro workspace</p>
+              <p className="font-semibold">{isDemo ? 'Demo workspace' : 'Workspace access'}</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Saved reviews, imports, screening, and exports
+                {isDemo ? 'One saved review, imports, limited AI screening, and exports' : 'Saved reviews, imports, screening, and exports'}
               </p>
-            </div>
-            <div className="text-right">
-              <span className="text-2xl font-semibold">$29</span>
-              <span className="text-sm text-muted-foreground">/month</span>
             </div>
           </div>
           <ul className="mt-5 space-y-2 text-sm">
@@ -4906,7 +4958,7 @@ function BillingDialog({ close }: { close: () => void }) {
             ))}
           </ul>
           <Button disabled className="mt-5 w-full">
-            <CreditCard /> Checkout connection required
+            <CreditCard /> Credit top-ups are not available yet
           </Button>
         </div>
       </div>

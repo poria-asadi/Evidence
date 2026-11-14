@@ -18,7 +18,7 @@ export async function POST(
     return Response.json({ error: 'Sign in required.' }, { status: 401 });
   if (!(await hasActiveAccess(user.userId)))
     return Response.json(
-      { error: 'An active plan or trial is required to run AI screening.' },
+      { error: 'Demo or paid access is required to run AI screening.' },
       { status: 402 },
     );
   const { id } = await params;

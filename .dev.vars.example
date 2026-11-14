@@ -6,8 +6,9 @@ OPENROUTER_GPT_MODEL=openai/gpt-6-luna
 OPENROUTER_ADJUDICATOR_MODEL=anthropic/claude-sonnet-5
 OPENROUTER_FULLTEXT_ADJUDICATOR_MODEL=openai/gpt-5.6-sol
 APP_PUBLIC_URL=http://localhost:3000
-
-# Local-only identity. Do not enable this in hosted or production settings.
-LOCAL_DEV_AUTH=true
-LOCAL_DEV_USER_ID=local-researcher
-LOCAL_DEV_USER_EMAIL=researcher@localhost
+# Configure a verified sender domain and keep these values private.
+RESEND_API_KEY=
+VERIFICATION_EMAIL_FROM=
+AUTH_CODE_SECRET=
+# Optional comparison source. Keep the key server-side.
+NETARZ_FX_API_KEY=
