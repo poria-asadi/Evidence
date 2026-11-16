@@ -6,7 +6,9 @@ export async function GET() {
   if (!user) return Response.json({ error: 'Sign in required.' }, { status: 401 });
   const reviews = await env.DB.prepare(`SELECT r.id, r.title, r.purpose, r.inclusion, r.exclusion,
     r.population, r.intervention, r.comparison, r.outcomes, r.stage, r.updated_at AS updatedAt,
-    (SELECT COUNT(*) FROM "references" x WHERE x.review_id = r.id) AS referenceCount
+    (SELECT COUNT(*) FROM "references" x WHERE x.review_id = r.id
+      AND NOT EXISTS (SELECT 1 FROM duplicate_pairs d WHERE d.review_id = r.id
+        AND d.right_reference_id = x.id AND d.status = 'confirmed_duplicate')) AS referenceCount
     FROM reviews r WHERE r.owner_id = ? ORDER BY r.updated_at DESC LIMIT 30`).bind(user.userId).all();
   const subscription = await env.DB.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ?').bind(user.userId).first();
   return Response.json({ reviews: reviews.results, subscription });

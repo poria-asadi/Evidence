@@ -46,6 +46,16 @@ export const accountSessions = sqliteTable(
   (table) => [index('idx_account_sessions_user').on(table.userId)],
 );
 
+export const passwordResetTokens = sqliteTable('password_reset_tokens', {
+  tokenHash: text('token_hash').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id),
+  expiresAt: integer('expires_at').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, (table) => [
+  uniqueIndex('idx_password_reset_user').on(table.userId),
+  index('idx_password_reset_expiry').on(table.expiresAt),
+]);
+
 export const loginAttempts = sqliteTable('login_attempts', {
   username: text('username').primaryKey(),
   failures: integer('failures').notNull(),

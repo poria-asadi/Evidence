@@ -49,11 +49,11 @@ export async function extractPdfText(bytes: ArrayBuffer) {
     }
     const text = articleTextFromPages(pages);
     if (normalizedPdfText(text).length < 200)
-      throw new Error('This PDF has no readable text layer. Upload a searchable PDF with OCR text.');
+      throw new Error('This PDF could not be read. Upload the Article\'s PDF.');
     const unreadablePages = pages.flatMap((pageText, index) =>
       normalizedPdfText(pageText).length < 10 ? [index + 1] : []);
     if (unreadablePages.length)
-      throw new Error(`The PDF has no readable text on page(s) ${unreadablePages.join(', ')}. Upload a complete searchable PDF with OCR text.`);
+      throw new Error(`The PDF could not be read on page(s) ${unreadablePages.join(', ')}. Upload the Article's PDF.`);
     if (text.length > 300_000)
       throw new Error('The extracted article text exceeds 300,000 characters.');
     return text;

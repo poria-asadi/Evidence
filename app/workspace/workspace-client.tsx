@@ -51,6 +51,11 @@ import {
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import DemoQuotaNotice, { notifyDemoUsageChanged } from '@/components/demo-quota-notice';
+import CompletionFeedback from '@/components/completion-feedback';
+import ErrorFeedback from '@/components/error-feedback';
+import RunEstimate from '@/components/run-estimate';
+import WorkspaceStepHelp, { StepHelpButton } from '@/components/workspace-step-help';
+import type { RunBenchmark, RunBenchmarks } from '@/lib/run-estimates';
 import ExtractionStep from './extraction-step';
 
 type Draft = {
@@ -129,7 +134,7 @@ type DuplicatePair = {
   rightSource: string;
   rightFileName: string;
 };
-type ImportSummary = { fileCount: number; totalRecords: number };
+type ImportSummary = { fileCount: number; totalRecords: number; uniqueRecords: number };
 type DuplicateSummary = {
   totalCandidates: number;
   autoResolved: number;
@@ -304,6 +309,16 @@ const stages = [
   ['05', 'Data Extraction'],
 ];
 
+function stepLockReason(targetStep: number, activeId: string | null, review?: Review) {
+  if (targetStep > 1 && !activeId)
+    return 'Save your protocol first to open the next step.';
+  if (targetStep >= 3 && !review?.referenceCount)
+    return 'Import references first, then return to this step.';
+  if (targetStep >= 4 && !['fulltext', 'extraction'].includes(review?.stage || ''))
+    return 'Finish title and abstract screening, then continue to full-text screening first.';
+  return null;
+}
+
 export default function WorkspaceClient({
   user,
 }: {
@@ -313,12 +328,69 @@ export default function WorkspaceClient({
   const [draft, setDraft] = useState<Draft>(blank);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [workspaceLoadError, setWorkspaceLoadError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
+  const [notice, setNoticeState] = useState('');
+  const [error, setErrorState] = useState('');
+  const [errorTarget, setErrorTarget] = useState<string | null>(null);
+  const [completion, setCompletion] = useState<{ message: string; resultId: string } | null>(null);
+  const [runBenchmarks, setRunBenchmarks] = useState<RunBenchmarks | null>(null);
+  const [estimateRefreshKey, setEstimateRefreshKey] = useState(0);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [navOpen, setNavOpen] = useState(false);
   const [step, setStep] = useState(1);
+  const lastScrolledView = useRef({ step, activeId });
+  useEffect(() => {
+    if (lastScrolledView.current.step === step && lastScrolledView.current.activeId === activeId) return;
+    lastScrolledView.current = { step, activeId };
+    window.scrollTo(0, 0);
+  }, [step, activeId]);
+  const currentView = useRef({ step, activeId });
+  useEffect(() => {
+    if (currentView.current.step === step && currentView.current.activeId === activeId) return;
+    currentView.current = { step, activeId };
+    setErrorState('');
+    setErrorTarget(null);
+    setNoticeState('');
+    setCompletion(null);
+    setHelpOpen(false);
+  }, [step, activeId]);
+  function setError(message: string, target?: string) {
+    if (message && (currentView.current.step !== step || currentView.current.activeId !== activeId)) return;
+    setErrorState(message);
+    setErrorTarget(message ? target ?? `step-${step}` : null);
+    if (message) {
+      setNoticeState('');
+      setCompletion(null);
+    }
+  }
+  function setNotice(message: string) {
+    if (message && (currentView.current.step !== step || currentView.current.activeId !== activeId)) return;
+    setNoticeState(message);
+    if (message) {
+      setErrorState('');
+      setErrorTarget(null);
+      setCompletion(null);
+    }
+  }
+  function showCompletion(message: string, resultId: string) {
+    if (currentView.current.step !== step || currentView.current.activeId !== activeId) return;
+    setCompletion({ message, resultId });
+    setErrorState('');
+    setErrorTarget(null);
+    setNoticeState('');
+    setEstimateRefreshKey((value) => value + 1);
+  }
+  useEffect(() => {
+    if (!activeId) return;
+    const controller = new AbortController();
+    fetch(`/api/reviews/${activeId}/run-estimates`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() as Promise<RunBenchmarks> : null)
+      .then((data) => { if (!controller.signal.aborted) setRunBenchmarks(data); })
+      .catch(() => { if (!controller.signal.aborted) setRunBenchmarks(null); });
+    return () => controller.abort();
+  }, [activeId, estimateRefreshKey]);
   const stagesNavRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const nav = stagesNavRef.current;
@@ -339,6 +411,7 @@ export default function WorkspaceClient({
   const [importSummary, setImportSummary] = useState<ImportSummary>({
     fileCount: 0,
     totalRecords: 0,
+    uniqueRecords: 0,
   });
   const [duplicatePairs, setDuplicatePairs] = useState<DuplicatePair[]>([]);
   const [duplicateSummary, setDuplicateSummary] = useState<DuplicateSummary>({
@@ -416,6 +489,17 @@ export default function WorkspaceClient({
     deferred: number;
     automaticRetrying: boolean;
   } | null>(null);
+  useEffect(() => {
+    const running = batchRunning || Boolean(aiRunningId) || Boolean(fullTextRunningId) ||
+      Boolean(fullTextBatchProgress && fullTextBatchProgress.processed < fullTextBatchProgress.total);
+    if (!running) return;
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [batchRunning, aiRunningId, fullTextRunningId, fullTextBatchProgress]);
   const fileInput = useRef<HTMLInputElement>(null);
   const batchStopRequested = useRef(false);
 
@@ -438,8 +522,25 @@ export default function WorkspaceClient({
     fullTextCriteria.exclusion !== fullTextCriteriaDraft.exclusion;
 
   useEffect(() => {
-    void refresh();
+    void refresh(true);
   }, []);
+  useEffect(() => {
+    if (loading || !activeId) return;
+    try {
+      localStorage.setItem(
+        `evidenceflow:workspace:${user.username}`,
+        JSON.stringify({ id: activeId, step }),
+      );
+    } catch {
+      // The review list still lets us restore the most recent review.
+    }
+  }, [activeId, step, loading, user.username]);
+  useEffect(() => {
+    if (!workspaceLoadError) return;
+    const retryWhenOnline = () => window.location.reload();
+    window.addEventListener('online', retryWhenOnline);
+    return () => window.removeEventListener('online', retryWhenOnline);
+  }, [workspaceLoadError]);
   useEffect(() => {
     if (activeId && step === 2) void loadImportWorkspace(activeId);
   }, [activeId, step]);
@@ -527,7 +628,7 @@ export default function WorkspaceClient({
     ).catch(() => undefined);
     return () => lifecycle.abort();
   }, []);
-  async function refresh(selectId?: string) {
+  async function refresh(restoreSelection = false) {
     try {
       const response = await fetch('/api/reviews');
       if (!response.ok) throw new Error('Could not load your reviews.');
@@ -540,23 +641,41 @@ export default function WorkspaceClient({
       };
       setReviews(data.reviews);
       setSubscription(data.subscription);
-      if (selectId) {
-        const selected = data.reviews.find(
-          (item: Review) => item.id === selectId,
-        );
-        if (selected) choose(selected);
+      setWorkspaceLoadError('');
+      if (restoreSelection) {
+        let lastSelection: { id: string; step: number } | null = null;
+        try {
+          const stored = localStorage.getItem(
+            `evidenceflow:workspace:${user.username}`,
+          );
+          if (stored) lastSelection = JSON.parse(stored);
+        } catch {
+          // Missing or unavailable browser storage falls back to the newest review.
+        }
+        const selected =
+          data.reviews.find((review) => review.id === lastSelection?.id) ||
+          data.reviews[0];
+        if (selected) {
+          choose(
+            selected,
+            selected.id === lastSelection?.id ? lastSelection?.step : undefined,
+          );
+        } else {
+          setError('');
+        }
       }
     } catch (cause) {
-      setError(
+      const message =
         cause instanceof Error
           ? cause.message
-          : 'Could not load your workspace.',
-      );
+          : 'Could not load your workspace.';
+      if (restoreSelection) setWorkspaceLoadError(message);
+      else setError(message);
     } finally {
       setLoading(false);
     }
   }
-  function choose(review: Review) {
+  function choose(review: Review, restoredStep?: number) {
     setActiveId(review.id);
     setDraft({
       title: review.title || '',
@@ -568,17 +687,26 @@ export default function WorkspaceClient({
       comparison: review.comparison || '',
       outcomes: review.outcomes || '',
     });
-    setStep(
+    const savedStageStep =
       review.stage === 'extraction'
         ? 5
         : review.stage === 'fulltext'
           ? 4
-        : review.stage === 'screening'
-          ? 3
-          : review.stage === 'import'
-            ? 2
-            : 1,
-    );
+          : review.stage === 'screening'
+            ? 3
+            : review.stage === 'import'
+              ? 2
+              : 1;
+    const canRestoreStep =
+      typeof restoredStep === 'number' &&
+      Number.isInteger(restoredStep) &&
+      restoredStep >= 1 &&
+      restoredStep <= 5 &&
+      (restoredStep <= 2 ||
+        (restoredStep === 3 && review.referenceCount > 0) ||
+        (restoredStep >= 4 &&
+          ['fulltext', 'extraction'].includes(review.stage)));
+    setStep(canRestoreStep ? restoredStep : savedStageStep);
     setImportResult(null);
     setDuplicatePage(1);
     setScreeningFilter('all');
@@ -611,11 +739,15 @@ export default function WorkspaceClient({
   function update(field: keyof Draft, value: string) {
     setDraft((current) => ({ ...current, [field]: value }));
     setNotice('');
+    if (errorTarget === `protocol-${field}`) setError('');
   }
   async function saveProtocol() {
     if (completed < 4) {
+      const firstMissing = (['title', 'purpose', 'inclusion', 'exclusion'] as const)
+        .find((field) => !draft[field].trim());
       setError(
         'Review title, main purpose, inclusion criteria, and exclusion criteria are required.',
+        firstMissing ? `protocol-${firstMissing}` : 'step-1',
       );
       return;
     }
@@ -639,10 +771,18 @@ export default function WorkspaceClient({
       setImportView('upload');
       setNotice('Protocol saved. You can now import your references.');
     } catch (cause) {
+      const protocolError = cause instanceof Error
+        ? cause.message
+        : 'The protocol could not be saved.';
+      const lower = protocolError.toLowerCase();
+      const field = lower.includes('title') ? 'title'
+        : lower.includes('purpose') ? 'purpose'
+          : lower.includes('inclusion') ? 'inclusion'
+            : lower.includes('exclusion') ? 'exclusion'
+              : null;
       setError(
-        cause instanceof Error
-          ? cause.message
-          : 'The protocol could not be saved.',
+        protocolError,
+        field ? `protocol-${field}` : 'step-1',
       );
     } finally {
       setSaving(false);
@@ -702,7 +842,7 @@ export default function WorkspaceClient({
         setDuplicatePage(1);
         await Promise.all([refresh(), loadImportWorkspace(activeId, 1)]);
       }
-      setError(cause instanceof Error ? cause.message : 'Import failed.');
+      setError(cause instanceof Error ? cause.message : 'Import failed.', 'import-upload');
     } finally {
       setImporting(false);
     }
@@ -756,6 +896,10 @@ export default function WorkspaceClient({
             (total: number, item: UploadHistory) => total + item.recordCount,
             0,
           ),
+          uniqueRecords: Math.max(0, historyData.uploads.reduce(
+            (total: number, item: UploadHistory) => total + item.recordCount,
+            0,
+          ) - duplicateData.summary.autoResolved),
         },
       );
       setDuplicatePairs(duplicateData.pairs);
@@ -767,6 +911,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'Import details could not be loaded.',
+        'step-2',
       );
     } finally {
       setDetailsLoading(false);
@@ -788,16 +933,22 @@ export default function WorkspaceClient({
       needsReview: Math.max(0, summary.needsReview - 1),
       researcherResolved: summary.researcherResolved + 1,
     }));
-    const response = await fetch(
-      `/api/reviews/${activeId}/duplicates/${pairId}`,
-      {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ decision }),
-      },
-    );
-    if (!response.ok) {
-      setError('The duplicate decision could not be saved.');
+    try {
+      const response = await fetch(
+        `/api/reviews/${activeId}/duplicates/${pairId}`,
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ decision }),
+        },
+      );
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error || 'The duplicate decision could not be saved.');
+      }
+      await Promise.all([refresh(), loadImportWorkspace(activeId)]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The duplicate decision could not be saved.', `duplicate-${pairId}`);
       await loadImportWorkspace(activeId);
     }
   }
@@ -820,6 +971,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'AI detective status could not be loaded.',
+        'screening-setup',
       );
     } finally {
       setProvidersLoading(false);
@@ -860,12 +1012,15 @@ export default function WorkspaceClient({
       });
       setUnresolvedDuplicates(Number(data.unresolvedDuplicates ?? 0));
       setScreeningTotalPages(Number(data.pagination?.totalPages ?? 1));
+      return true;
     } catch (cause) {
       setError(
         cause instanceof Error
           ? cause.message
           : 'Screening queue could not be loaded.',
+        'screening-results',
       );
+      return false;
     } finally {
       setScreeningLoading(false);
     }
@@ -886,6 +1041,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'Screening status could not be loaded.',
+        'screening-setup',
       );
     }
   }
@@ -916,6 +1072,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'Screening could not be started.',
+        'screening-setup',
       );
       setBatchRunning(false);
     }
@@ -923,6 +1080,7 @@ export default function WorkspaceClient({
 
   async function processScreeningBatch(jobId: string) {
     if (!activeId) return;
+    let completedCount = 0;
     setBatchRunning(true);
     setError('');
     setNotice('');
@@ -967,19 +1125,18 @@ export default function WorkspaceClient({
         if (current.processedCount > lastProcessedCount) {
           lastProcessedCount = current.processedCount;
           retryAttempt = 0;
+          notifyDemoUsageChanged();
         }
         if (current.status !== 'running') break;
       }
-      if (current?.status === 'completed')
-        setNotice(
-          `${current.successfulCount} records were assessed in this screening run.`,
-        );
+      if (current?.status === 'completed') completedCount = current.successfulCount;
     } catch (cause) {
       batchStopRequested.current = true;
       setError(
         cause instanceof Error
           ? cause.message
           : 'Screening could not continue.',
+        'screening-setup',
       );
       try {
         const response = await fetch(
@@ -1001,7 +1158,9 @@ export default function WorkspaceClient({
       await loadScreeningJob(activeId);
     } finally {
       setBatchRunning(false);
-      await loadScreening(activeId, screeningFilter, screeningPage);
+      const resultsLoaded = await loadScreening(activeId, screeningFilter, screeningPage);
+      if (completedCount > 0 && resultsLoaded)
+        showCompletion(`${completedCount} records were assessed in this screening run.`, 'screening-results');
       notifyDemoUsageChanged();
     }
   }
@@ -1033,6 +1192,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'Screening could not be stopped.',
+        'screening-setup',
       );
     }
   }
@@ -1065,6 +1225,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'The screening decision could not be saved.',
+        `screening-${referenceId}`,
       );
     } finally {
       setScreeningSaving(null);
@@ -1096,6 +1257,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'The bulk decision could not be saved.',
+        'screening-results',
       );
     } finally {
       setScreeningSaving(null);
@@ -1153,12 +1315,24 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'Full-text criteria could not be loaded.',
+        'fulltext-criteria',
       );
     }
   }
 
   async function saveFullTextCriteria() {
     if (!activeId) return;
+    if (!fullTextCriteriaDraft.useTiabCriteria) {
+      const missing = !fullTextCriteriaDraft.inclusion.trim()
+        ? 'inclusion'
+        : !fullTextCriteriaDraft.exclusion.trim()
+          ? 'exclusion'
+          : null;
+      if (missing) {
+        setError('Full-text inclusion and exclusion criteria are both required unless you use the saved title and abstract criteria.', `fulltext-criteria-${missing}`);
+        return;
+      }
+    }
     setFullTextCriteriaSaving(true);
     setError('');
     try {
@@ -1200,6 +1374,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'Full-text criteria could not be saved.',
+        'fulltext-criteria',
       );
     } finally {
       setFullTextCriteriaSaving(false);
@@ -1224,6 +1399,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'Full-text files could not be loaded.',
+        'fulltext-articles',
       );
     } finally {
       setFullTextLoading(false);
@@ -1234,6 +1410,7 @@ export default function WorkspaceClient({
     if (!activeId) return;
     setFullTextUploadingId(referenceId);
     setError('');
+    setNotice('');
     try {
       if (file.size > 25 * 1024 * 1024)
         throw new Error('Full-text PDFs must be 25 MB or smaller.');
@@ -1258,6 +1435,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'The full text could not be uploaded.',
+        `fulltext-${referenceId}`,
       );
     } finally {
       setFullTextUploadingId(null);
@@ -1281,12 +1459,15 @@ export default function WorkspaceClient({
         );
       setFullTextScreeningItems(data.items || []);
       setFullTextProviders(data.providers || []);
+      return true;
     } catch (cause) {
       setError(
         cause instanceof Error
           ? cause.message
           : 'Full-text screening results could not be loaded.',
+        'fulltext-run',
       );
+      return false;
     } finally {
       setFullTextScreeningLoading(false);
     }
@@ -1341,12 +1522,12 @@ export default function WorkspaceClient({
         return 'deferred';
       }
       if (!batchRun) {
-        await loadFullTextScreening(activeId);
-        setNotice(
-          adjudicate
-            ? 'Sherlock Holmes saved an advisory full-text opinion.'
-            : 'All three full-text detective decisions were saved.',
-        );
+        const resultsLoaded = await loadFullTextScreening(activeId);
+        if (resultsLoaded)
+          showCompletion(
+            adjudicate ? 'Sherlock Holmes saved an advisory full-text opinion.' : 'All three full-text detective decisions were saved.',
+            'fulltext-decisions',
+          );
       }
       return 'complete';
     } catch (cause) {
@@ -1354,6 +1535,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'Full-text screening could not run.',
+        `fulltext-decision-${referenceId}`,
       );
       return 'fatal';
     } finally {
@@ -1392,6 +1574,7 @@ export default function WorkspaceClient({
         cause instanceof Error
           ? cause.message
           : 'The full-text decision could not be saved.',
+        `fulltext-decision-${referenceId}`,
       );
     } finally {
       setFullTextDecisionSavingId(null);
@@ -1413,7 +1596,7 @@ export default function WorkspaceClient({
       await loadFullTextScreening(activeId);
       setNotice(`${data.updated || 0} full-text article${data.updated === 1 ? '' : 's'} marked ${category} by the researcher.`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The bulk full-text decision could not be saved.');
+      setError(cause instanceof Error ? cause.message : 'The bulk full-text decision could not be saved.', 'fulltext-run');
     } finally {
       setFullTextBulkSaving(null);
     }
@@ -1491,20 +1674,17 @@ export default function WorkspaceClient({
       deferredItems = stillDeferred;
     }
     setFullTextCostConfirmed(false);
-    await loadFullTextScreening(activeId);
+    const resultsLoaded = await loadFullTextScreening(activeId);
     setFullTextBatchProgress({
       processed,
       total: pending.length,
       deferred: deferredItems.length,
       automaticRetrying: false,
     });
-    if (!stopped) {
-      setNotice(
-        deferredItems.length
-          ? `Automatic screening finished. ${deferredItems.length} article${deferredItems.length === 1 ? ' needs' : 's need'} attention; the exact article and issue are shown below.`
-          : `Full-text screening finished for ${processed} article${processed === 1 ? '' : 's'}.`,
-      );
-    }
+    if (!stopped && resultsLoaded && processed > 0 && deferredItems.length === 0)
+      showCompletion(`Full-text screening finished for ${processed} article${processed === 1 ? '' : 's'}.`, 'fulltext-decisions');
+    else if (!stopped && resultsLoaded && deferredItems.length > 0)
+      setNotice(`Screening paused with ${deferredItems.length} article${deferredItems.length === 1 ? '' : 's'} needing attention. Review the issues below and retry those articles.`);
   }
 
   async function resolveAllFullTextConflicts() {
@@ -1516,19 +1696,18 @@ export default function WorkspaceClient({
     );
     let reviewed = 0;
     let deferred = 0;
+    let stopped = false;
     for (const item of conflicts) {
       const outcome = await requestFullTextAssessment(item.id, true, true);
-      if (outcome === 'fatal') break;
+      if (outcome === 'fatal') { stopped = true; break; }
       if (outcome === 'complete') reviewed += 1;
       if (outcome === 'deferred') deferred += 1;
     }
-    await loadFullTextScreening(activeId);
-    if (reviewed || deferred)
-      setNotice(
-        deferred
-          ? `Sherlock Holmes reviewed ${reviewed} conflict${reviewed === 1 ? '' : 's'}; ${deferred} slow article${deferred === 1 ? ' was' : 's were'} set aside for retry.`
-          : `Sherlock Holmes reviewed ${reviewed} full-text conflict${reviewed === 1 ? '' : 's'}.`,
-      );
+    const resultsLoaded = await loadFullTextScreening(activeId);
+    if (!stopped && resultsLoaded && reviewed > 0 && deferred === 0)
+      showCompletion(`Sherlock Holmes reviewed ${reviewed} full-text conflict${reviewed === 1 ? '' : 's'}.`, 'fulltext-decisions');
+    else if (!stopped && resultsLoaded && deferred > 0)
+      setNotice(`${deferred} article${deferred === 1 ? ' was' : 's were'} set aside for retry. Review the issues below before continuing.`);
   }
 
   async function runAiScreening(referenceId: string, adjudicate = false) {
@@ -1570,18 +1749,19 @@ export default function WorkspaceClient({
         }
         break;
       }
-      await loadScreening(activeId);
+      const resultsLoaded = await loadScreening(activeId);
       if (!adjudicate) setCostConfirmed(false);
-      setNotice(
-        adjudicate
-          ? 'The optional conflict review was saved.'
-          : 'All three detective decisions were saved.',
-      );
+      if (resultsLoaded)
+        showCompletion(
+          adjudicate ? 'Sherlock Holmes saved an advisory screening opinion.' : 'All three detective decisions were saved.',
+          'screening-results',
+        );
     } catch (cause) {
       setError(
         cause instanceof Error
           ? cause.message
           : 'AI screening could not be completed.',
+        `screening-${referenceId}`,
       );
     } finally {
       setAiRunningId(null);
@@ -1617,10 +1797,9 @@ export default function WorkspaceClient({
           );
         reviewed += 1;
       }
-      await loadScreening(activeId);
-      setNotice(
-        `Sherlock Holmes reviewed ${reviewed} conflict${reviewed === 1 ? '' : 's'}. The advisory decisions are saved separately.`,
-      );
+      const resultsLoaded = await loadScreening(activeId);
+      if (reviewed > 0 && resultsLoaded)
+        showCompletion(`Sherlock Holmes reviewed ${reviewed} conflict${reviewed === 1 ? '' : 's'}. The advisory opinions are ready to inspect.`, 'screening-results');
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -1631,6 +1810,37 @@ export default function WorkspaceClient({
       setAiRunningId(null);
       notifyDemoUsageChanged();
     }
+  }
+
+  if (loading || (workspaceLoadError && !activeId && reviews.length === 0)) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background px-4 text-foreground">
+        <div className="w-full max-w-md rounded-2xl border bg-card p-6 text-center shadow-sm">
+          <BookOpenCheck className="mx-auto mb-4 size-8 text-primary" />
+          <h1 className="text-lg font-semibold">
+            {loading
+              ? 'Opening your workspace…'
+              : 'Your workspace could not be loaded'}
+          </h1>
+          {workspaceLoadError && !loading && (
+            <>
+              <p role="alert" className="mt-3 text-sm text-muted-foreground">
+                {workspaceLoadError} Check your connection and try again.
+              </p>
+              <Button
+                className="mt-5"
+                onClick={() => {
+                  setLoading(true);
+                  void refresh(true);
+                }}
+              >
+                Try again
+              </Button>
+            </>
+          )}
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -1808,7 +2018,8 @@ export default function WorkspaceClient({
               <Button
                 variant="outline"
                 size="icon"
-                aria-label="Help"
+                aria-label={`Help with ${stages[step - 1][1]}`}
+                onClick={() => setHelpOpen(true)}
                 className="bg-card"
               >
                 <CircleHelp />
@@ -1821,19 +2032,16 @@ export default function WorkspaceClient({
                 {stages.map(([number, label], index) => (
                   <div key={number} className="flex items-center">
                     <button
-                      onClick={() => setStep(index + 1)}
-                      disabled={
-                        (index > 0 && !activeId) ||
-                        (index === 2 &&
-                          !reviews.find((review) => review.id === activeId)
-                            ?.referenceCount) ||
-                        (index >= 3 &&
-                          !['fulltext', 'extraction'].includes(
-                            reviews.find((review) => review.id === activeId)?.stage || '',
-                          ))
-                      }
+                      type="button"
+                      data-error-target={`stage-tab-${index + 1}`}
+                      onClick={() => {
+                        const reason = stepLockReason(index + 1, activeId, reviews.find((review) => review.id === activeId));
+                        if (reason) setError(reason, `stage-tab-${index + 1}`);
+                        else setStep(index + 1);
+                      }}
+                      aria-disabled={Boolean(stepLockReason(index + 1, activeId, reviews.find((review) => review.id === activeId)))}
                       aria-current={step === index + 1 ? 'step' : undefined}
-                      className={`flex min-h-10 items-center gap-2 rounded-xl px-2.5 text-xs whitespace-nowrap transition sm:px-3 ${step === index + 1 ? 'bg-primary/10 font-semibold text-primary' : index < step ? 'text-[var(--success-ink)] hover:bg-muted' : 'text-muted-foreground hover:bg-muted'} disabled:opacity-55`}
+                      className={`flex min-h-10 items-center gap-2 rounded-xl px-2.5 text-xs whitespace-nowrap transition sm:px-3 ${step === index + 1 ? 'bg-primary/10 font-semibold text-primary' : index < step ? 'text-[var(--success-ink)] hover:bg-muted' : 'text-muted-foreground hover:bg-muted'} aria-disabled:cursor-not-allowed aria-disabled:opacity-55`}
                     >
                       <span
                         className={`grid size-7 min-h-7 min-w-7 shrink-0 place-items-center overflow-hidden rounded-full border text-[10px] leading-none ${step === index + 1 ? 'border-primary bg-primary text-primary-foreground' : index < step ? 'border-[var(--success)] bg-[var(--success-soft)]' : 'bg-card'}`}
@@ -1846,14 +2054,6 @@ export default function WorkspaceClient({
                 ))}
               </div>
             </nav>
-            {error && (
-              <div
-                role="alert"
-                className="mb-5 rounded-xl border border-destructive/25 bg-destructive/8 px-4 py-3 text-sm text-destructive"
-              >
-                {error}
-              </div>
-            )}
             {notice && (
               <div
                 role="status"
@@ -1865,14 +2065,20 @@ export default function WorkspaceClient({
             {step === 1 ? (
               <ProtocolStep
                 draft={draft}
+                onHelp={() => setHelpOpen(true)}
                 update={update}
                 completed={completed}
+                error={error}
+                errorTarget={errorTarget}
                 saving={saving}
                 save={saveProtocol}
               />
             ) : step === 2 ? (
               <ImportStep
                 activeId={activeId}
+                onHelp={() => setHelpOpen(true)}
+                error={error}
+                errorTarget={errorTarget}
                 importing={importing}
                 result={importResult}
                 fileInput={fileInput}
@@ -1895,6 +2101,10 @@ export default function WorkspaceClient({
               />
             ) : step === 3 ? (
               <ScreeningSetup
+                onHelp={() => setHelpOpen(true)}
+                estimate={runBenchmarks?.titleAbstract}
+                error={error}
+                errorTarget={errorTarget}
                 providers={providers}
                 providersLoading={providersLoading}
                 references={screeningReferences}
@@ -1930,6 +2140,10 @@ export default function WorkspaceClient({
             ) : step === 4 ? (
               <FullTextStep
                 reviewId={activeId}
+                onHelp={() => setHelpOpen(true)}
+                estimate={runBenchmarks?.fullText}
+                error={error}
+                errorTarget={errorTarget}
                 results={categorizedResults}
                 files={fullTextFiles}
                 loading={
@@ -1964,17 +2178,23 @@ export default function WorkspaceClient({
                 continueToExtraction={() => setStep(5)}
                 criteria={fullTextCriteria}
                 criteriaDraft={fullTextCriteriaDraft}
-                setCriteriaDraft={setFullTextCriteriaDraft}
+                setCriteriaDraft={(value) => {
+                  setFullTextCriteriaDraft(value);
+                  if (errorTarget?.startsWith('fulltext-criteria-')) setError('');
+                }}
                 criteriaDirty={fullTextCriteriaDirty}
                 criteriaSaving={fullTextCriteriaSaving}
                 saveCriteria={saveFullTextCriteria}
               />
             ) : activeId ? (
-              <ExtractionStep reviewId={activeId} back={() => setStep(4)} />
+              <ExtractionStep reviewId={activeId} back={() => setStep(4)} onHelp={() => setHelpOpen(true)} estimate={runBenchmarks?.extraction} onComplete={(message) => showCompletion(message, 'extracted-articles')} />
             ) : null}
           </div>
         </section>
       </div>
+      <ErrorFeedback message={error} target={errorTarget} fallbackTarget={`step-${step}`} onClose={() => setError('')} />
+      {completion && <CompletionFeedback message={completion.message} resultId={completion.resultId} canContinue={step < 5} onClose={() => setCompletion(null)} />}
+      <WorkspaceStepHelp step={step} open={helpOpen} onOpenChange={setHelpOpen} />
       {showBilling && <BillingDialog close={() => setShowBilling(false)} isDemo={subscription?.status !== 'active'} />}
     </main>
   );
@@ -1982,19 +2202,25 @@ export default function WorkspaceClient({
 
 function ProtocolStep({
   draft,
+  onHelp,
   update,
   completed,
+  error,
+  errorTarget,
   saving,
   save,
 }: {
   draft: Draft;
+  onHelp: () => void;
   update: (field: keyof Draft, value: string) => void;
   completed: number;
+  error: string;
+  errorTarget: string | null;
   saving: boolean;
   save: () => void;
 }) {
   return (
-    <div>
+    <div data-error-target="step-1">
       <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-primary">
@@ -2004,28 +2230,35 @@ function ProtocolStep({
             Define what evidence belongs.
           </h1>
         </div>
-        <div className="w-full min-w-48 rounded-xl border bg-card p-3 sm:w-auto">
-          <div className="mb-2 flex justify-between text-xs">
-            <span>Required fields</span>
-            <span>{completed}/4</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <StepHelpButton onClick={onHelp} />
+          <div className="w-full min-w-48 rounded-xl border bg-card p-3 sm:w-auto">
+            <div className="mb-2 flex justify-between text-xs">
+              <span>Required fields</span>
+              <span>{completed}/4</span>
+            </div>
+            <Progress value={(completed / 4) * 100} />
           </div>
-          <Progress value={(completed / 4) * 100} />
         </div>
       </div>
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="surface-card xl:col-span-2">
           <SectionHeading icon={<FlaskConical />} title="Review purpose" />
           <div className="grid gap-5 p-5 sm:p-6 md:grid-cols-2">
-            <Field label="Review title" required>
+            <Field label="Review title" required error={errorTarget === 'protocol-title' ? error : undefined}>
               <Input
+                data-error-target="protocol-title"
+                aria-invalid={errorTarget === 'protocol-title'}
                 value={draft.title}
                 onChange={(e) => update('title', e.target.value)}
                 placeholder="e.g. Digital interventions for adherence"
                 className="h-11"
               />
             </Field>
-            <Field label="Main purpose" required>
+            <Field label="Main purpose" required error={errorTarget === 'protocol-purpose' ? error : undefined}>
               <Textarea
+                data-error-target="protocol-purpose"
+                aria-invalid={errorTarget === 'protocol-purpose'}
                 value={draft.purpose}
                 onChange={(e) => update('purpose', e.target.value)}
                 placeholder="We want to determine whether…"
@@ -2037,8 +2270,10 @@ function ProtocolStep({
         <section className="surface-card">
           <SectionHeading icon={<Check />} title="Inclusion criteria" />
           <div className="p-5 sm:p-6">
-            <Field label="Inclusion criteria" required>
+            <Field label="Inclusion criteria" required error={errorTarget === 'protocol-inclusion' ? error : undefined}>
               <Textarea
+                data-error-target="protocol-inclusion"
+                aria-invalid={errorTarget === 'protocol-inclusion'}
                 value={draft.inclusion}
                 onChange={(e) => update('inclusion', e.target.value)}
                 placeholder={'Adults aged 18+\nRandomized controlled trials'}
@@ -2050,8 +2285,10 @@ function ProtocolStep({
         <section className="surface-card">
           <SectionHeading icon={<X />} title="Exclusion criteria" />
           <div className="p-5 sm:p-6">
-            <Field label="Exclusion criteria" required>
+            <Field label="Exclusion criteria" required error={errorTarget === 'protocol-exclusion' ? error : undefined}>
               <Textarea
+                data-error-target="protocol-exclusion"
+                aria-invalid={errorTarget === 'protocol-exclusion'}
                 value={draft.exclusion}
                 onChange={(e) => update('exclusion', e.target.value)}
                 placeholder={'Conference abstracts only\nAnimal studies'}
@@ -2085,7 +2322,7 @@ function ProtocolStep({
       <div className="sticky bottom-0 z-20 -mx-4 mt-6 flex justify-end border-t bg-background/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
         <Button
           onClick={save}
-          disabled={completed < 4 || saving}
+          disabled={saving}
           size="lg"
           className="h-11 px-5"
         >
@@ -2098,6 +2335,9 @@ function ProtocolStep({
 
 function ImportStep({
   activeId,
+  onHelp,
+  error,
+  errorTarget,
   importing,
   result,
   fileInput,
@@ -2116,6 +2356,9 @@ function ImportStep({
   continueToScreening,
 }: {
   activeId: string | null;
+  onHelp: () => void;
+  error: string;
+  errorTarget: string | null;
   importing: boolean;
   result: ImportResult | null;
   fileInput: React.RefObject<HTMLInputElement | null>;
@@ -2135,7 +2378,7 @@ function ImportStep({
 }) {
   const pending = duplicateSummary.needsReview;
   return (
-    <div>
+    <div data-error-target="step-2">
       <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-primary">
@@ -2145,14 +2388,14 @@ function ImportStep({
             Build one trustworthy library.
           </h1>
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Summary label="Files" value={importSummary.fileCount} />
-          <Summary label="Articles" value={importSummary.totalRecords} />
-          <Summary
-            label="Auto-resolved"
-            value={duplicateSummary.autoResolved}
-          />
-          <Summary label="To review" value={pending} />
+        <div className="space-y-3">
+          <StepHelpButton onClick={onHelp} />
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Summary label="Files" value={importSummary.fileCount} />
+            <Summary label="Unique articles" value={importSummary.uniqueRecords} />
+            <Summary label="Auto-resolved" value={duplicateSummary.autoResolved} />
+            <Summary label="To review" value={pending} />
+          </div>
         </div>
       </div>
       {uploads.length > 0 && (
@@ -2229,6 +2472,7 @@ function ImportStep({
                 }}
               />
               <button
+                data-error-target="import-upload"
                 disabled={!activeId || importing}
                 onClick={() => fileInput.current?.click()}
                 className="upload-zone flex min-h-64 w-full flex-col items-center justify-center rounded-2xl border border-dashed border-primary/35 p-6 text-center disabled:opacity-50"
@@ -2249,6 +2493,7 @@ function ImportStep({
                   Choose files
                 </span>
               </button>
+              {errorTarget === 'import-upload' && <p className="mt-3 text-xs leading-5 text-destructive">{error}</p>}
               <div className="mt-4 flex gap-3 rounded-xl bg-[var(--info-soft)] p-4 text-sm leading-6 text-[var(--info-ink)]">
                 <Info className="mt-1 size-4 shrink-0" />
                 Importing is free. Add more files whenever needed; every source
@@ -2256,7 +2501,7 @@ function ImportStep({
               </div>
             </div>
             <div>
-              {!result ? (
+              {!uploads.length && !result ? (
                 <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border bg-muted/20 p-8 text-center">
                   <Database className="size-10 text-primary/35" />
                   <h2 className="mt-4 font-semibold">
@@ -2269,19 +2514,36 @@ function ImportStep({
                 </div>
               ) : (
                 <>
+                  <h2 className="text-lg font-semibold">Library summary · all files</h2>
                   <div className="grid grid-cols-3 gap-3">
                     <Summary
-                      label="References imported"
-                      value={result.recordCount}
+                      label="Files uploaded"
+                      value={importSummary.fileCount}
                     />
                     <Summary
-                      label="Auto-resolved"
-                      value={result.autoResolvedCount}
+                      label="Records imported"
+                      value={importSummary.totalRecords}
                     />
-                    <Summary label="Needs review" value={result.reviewCount} />
+                    <Summary label="Unique articles" value={importSummary.uniqueRecords} />
                   </div>
-                  <ImportQuality diagnostics={result.diagnostics} />
-                  <ReferencePreview rows={result.preview} />
+                  <div className="rounded-xl border bg-muted/20 p-4">
+                    <p className="text-sm font-semibold">Recent uploaded files</p>
+                    <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+                      {uploads.map((file) => (
+                        <li key={file.id} className="flex justify-between gap-3">
+                          <span className="min-w-0 truncate">{file.fileName}</span>
+                          <span className="shrink-0 tabular-nums">{file.recordCount} records</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  {result && (
+                    <div className="space-y-4 border-t pt-4">
+                      <p className="text-sm font-semibold">Latest file · {result.fileName}</p>
+                      <ImportQuality diagnostics={result.diagnostics} />
+                      <ReferencePreview rows={result.preview} />
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -2302,7 +2564,7 @@ function ImportStep({
               </p>
             </div>
           </div>
-          <DuplicateQueue pairs={pairs} page={duplicatePage} decide={decide} />
+          <DuplicateQueue pairs={pairs} page={duplicatePage} decide={decide} error={error} errorTarget={errorTarget} />
           {duplicateTotalPages > 1 && (
             <div className="mt-4 flex items-center justify-between rounded-2xl border bg-card px-4 py-3 text-sm">
               <span className="text-muted-foreground">
@@ -2432,10 +2694,14 @@ function DuplicateQueue({
   pairs,
   page,
   decide,
+  error,
+  errorTarget,
 }: {
   pairs: DuplicatePair[];
   page: number;
   decide: (id: string, decision: 'confirmed_duplicate' | 'keep_both') => void;
+  error: string;
+  errorTarget: string | null;
 }) {
   if (!pairs.length)
     return (
@@ -2457,7 +2723,8 @@ function DuplicateQueue({
   return (
     <div className="space-y-3">
       {pairs.map((pair, index) => (
-        <details key={pair.id} className="surface-card group overflow-hidden">
+        <details key={pair.id} data-error-target={`duplicate-${pair.id}`} className="surface-card group overflow-hidden">
+          {errorTarget === `duplicate-${pair.id}` && <p className="mx-4 mt-4 rounded-lg bg-destructive/8 px-3 py-2 text-xs leading-5 text-destructive">{error}</p>}
           <summary className="cursor-pointer list-none px-4 py-4 sm:px-5">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
@@ -2669,6 +2936,10 @@ function ImportHistory({ uploads }: { uploads: UploadHistory[] }) {
 }
 
 function ScreeningSetup({
+  onHelp,
+  estimate,
+  error,
+  errorTarget,
   providers,
   providersLoading,
   references,
@@ -2698,6 +2969,10 @@ function ScreeningSetup({
   setPage,
   continueToFullText,
 }: {
+  onHelp: () => void;
+  estimate?: RunBenchmark;
+  error: string;
+  errorTarget: string | null;
   providers: ProviderStatus[];
   providersLoading: boolean;
   references: ScreeningReference[];
@@ -2743,7 +3018,7 @@ function ScreeningSetup({
       setBatchSize(selectableRecords);
   }, [batchSize, selectableRecords, setBatchSize]);
   return (
-    <div>
+    <div data-error-target="step-3">
       <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-primary">
@@ -2753,10 +3028,13 @@ function ScreeningSetup({
             Review the evidence queue.
           </h1>
         </div>
-        <div className="flex gap-2">
-          <Summary label="After deduplication" value={summary.total} />
-          <Summary label="AI screened" value={summary.aiAssessed} />
-          <Summary label="Conflicts" value={summary.conflicts} />
+        <div className="space-y-3">
+          <StepHelpButton onClick={onHelp} />
+          <div className="flex gap-2">
+            <Summary label="After deduplication" value={summary.total} />
+            <Summary label="AI screened" value={summary.aiAssessed} />
+            <Summary label="Conflicts" value={summary.conflicts} />
+          </div>
         </div>
       </div>
       <DemoQuotaNotice stage="titleAbstract" />
@@ -2778,7 +3056,7 @@ function ScreeningSetup({
         <a href="#screening-manual" className="shrink-0 rounded-xl border bg-card px-3 py-2 font-medium text-primary">Manual review</a>
       </nav>
       <div className="space-y-5">
-        <section id="screening-setup" className="surface-card scroll-mt-24">
+        <section id="screening-setup" data-error-target="screening-setup" className="surface-card scroll-mt-24">
           <details className="group">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 border-b p-5 text-sm font-semibold sm:p-6">
             <span className="flex items-center gap-3"><span className="section-icon"><Cpu /></span><span>AI detectives <span className="block text-xs font-normal text-muted-foreground">{providersLoading ? 'Checking connections…' : `${providers.filter((provider) => provider.configured).length} connected`}</span></span></span>
@@ -2962,6 +3240,15 @@ function ScreeningSetup({
                   </div>
                 </div>
               )}
+              <RunEstimate
+                stage="titleAbstract"
+                count={job && (job.status === 'running' || batchRunning)
+                  ? Math.max(0, job.requestedCount - job.processedCount)
+                  : Math.min(batchSize, selectableRecords)}
+                benchmark={estimate}
+                running={batchRunning || job?.status === 'running'}
+                remaining={batchRunning || job?.status === 'running'}
+              />
             </div>
           </div>
         </section>
@@ -3015,7 +3302,7 @@ function ScreeningSetup({
           )}
         </section>
       </div>
-      <section id="screening-results" className="mt-6 scroll-mt-24 space-y-5">
+      <section id="screening-results" data-error-target="screening-results" className="mt-6 scroll-mt-24 space-y-5">
         <div className="rounded-3xl border border-primary/25 bg-card p-5 shadow-[0_18px_50px_-30px_var(--primary)] sm:p-6">
           <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
             <div className="flex items-start gap-4">
@@ -3092,7 +3379,7 @@ function ScreeningSetup({
             </div>
           </div>
         </div>
-        <details id="screening-manual" className="surface-card group scroll-mt-24">
+        <details id="screening-manual" data-error-target="screening-manual" className="surface-card group scroll-mt-24">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5 font-semibold sm:p-6">
             <span>
               Optional researcher screening
@@ -3146,6 +3433,7 @@ function ScreeningSetup({
                 <ScreeningCard
                   key={reference.id}
                   reference={reference}
+                  error={errorTarget === `screening-${reference.id}` ? error : ''}
                   index={index}
                   saving={savingId === reference.id}
                   aiRunning={aiRunningId === reference.id}
@@ -3321,6 +3609,7 @@ function CategorizedResults({
                   items.map((item) => (
                     <article
                       key={item.id}
+                      data-error-target={`screening-${item.id}`}
                       className="rounded-xl border bg-white/90 p-3 shadow-sm"
                     >
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -3508,6 +3797,10 @@ function CategorizedResults({
 
 function FullTextStep({
   reviewId,
+  onHelp,
+  estimate,
+  error,
+  errorTarget,
   results,
   files,
   loading,
@@ -3539,6 +3832,10 @@ function FullTextStep({
   saveCriteria,
 }: {
   reviewId: string | null;
+  onHelp: () => void;
+  estimate?: RunBenchmark;
+  error: string;
+  errorTarget: string | null;
   results: CategorizedResult[];
   files: FullTextFile[];
   loading: boolean;
@@ -3613,7 +3910,7 @@ function FullTextStep({
   );
 
   return (
-    <div>
+    <div data-error-target="step-4">
       <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-primary">
@@ -3623,9 +3920,12 @@ function FullTextStep({
             Continue with the included studies.
           </h1>
         </div>
-        <Button variant="outline" onClick={backToScreening}>
-          Return to title and abstract
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <StepHelpButton onClick={onHelp} />
+          <Button variant="outline" onClick={backToScreening}>
+            Return to title and abstract
+          </Button>
+        </div>
       </div>
       <DemoQuotaNotice stage="fullText" />
 
@@ -3669,7 +3969,7 @@ function FullTextStep({
                   <Sparkles />
                   {aiRunningId === unresolvedConflict.id
                     ? 'Investigating…'
-                    : 'Ask Sherlock about a conflict'}
+                    : 'Ask Sherlock Holmes about a conflict'}
                 </Button>
               )}
             </div>
@@ -3677,7 +3977,7 @@ function FullTextStep({
         )}
       </section>
 
-      <section id="fulltext-criteria" className="surface-card mt-6 scroll-mt-24 p-5 sm:p-6">
+      <section id="fulltext-criteria" data-error-target="fulltext-criteria" className="surface-card mt-6 scroll-mt-24 p-5 sm:p-6">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div>
             <div className="flex items-center gap-2">
@@ -3738,6 +4038,8 @@ function FullTextStep({
               Full-text inclusion criteria
               <Textarea
                 id="full-text-inclusion"
+                data-error-target="fulltext-criteria-inclusion"
+                aria-invalid={errorTarget === 'fulltext-criteria-inclusion'}
                 value={criteriaDraft.inclusion}
                 onChange={(event) =>
                   setCriteriaDraft((current) => ({
@@ -3748,6 +4050,7 @@ function FullTextStep({
                 placeholder="Enter the conditions a complete article must meet."
                 className="min-h-32 resize-y bg-white font-normal"
               />
+              {errorTarget === 'fulltext-criteria-inclusion' && <span className="text-xs text-destructive">{error}</span>}
             </label>
             <label
               htmlFor="full-text-exclusion"
@@ -3756,6 +4059,8 @@ function FullTextStep({
               Full-text exclusion criteria
               <Textarea
                 id="full-text-exclusion"
+                data-error-target="fulltext-criteria-exclusion"
+                aria-invalid={errorTarget === 'fulltext-criteria-exclusion'}
                 value={criteriaDraft.exclusion}
                 onChange={(event) =>
                   setCriteriaDraft((current) => ({
@@ -3766,6 +4071,7 @@ function FullTextStep({
                 placeholder="Enter the conditions that exclude a complete article."
                 className="min-h-32 resize-y bg-white font-normal"
               />
+              {errorTarget === 'fulltext-criteria-exclusion' && <span className="text-xs text-destructive">{error}</span>}
             </label>
           </div>
         )}
@@ -3792,7 +4098,7 @@ function FullTextStep({
         </div>
       </section>
 
-      <section id="fulltext-articles" className="surface-card mt-6 scroll-mt-24 overflow-hidden">
+      <section id="fulltext-articles" data-error-target="fulltext-articles" className="surface-card mt-6 scroll-mt-24 overflow-hidden">
         <div className="border-b p-5 sm:p-6">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
             <div>
@@ -3803,7 +4109,7 @@ function FullTextStep({
             </div>
           </div>
           <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-            Upload a PDF for each included article before full-text screening.
+            Upload the Article&apos;s PDF for each included article before full-text screening.
           </div>
         </div>
         {loading ? (
@@ -3826,7 +4132,8 @@ function FullTextStep({
               return (
                 <article
                   key={item.id}
-                  className="flex flex-col justify-between gap-3 px-4 py-3 sm:flex-row sm:items-center sm:px-5"
+                  data-error-target={`fulltext-${item.id}`}
+                  className="flex flex-col justify-between gap-3 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-5"
                 >
                   <button
                     type="button"
@@ -3885,10 +4192,13 @@ function FullTextStep({
                       {uploadingId === item.id
                         ? 'Adding…'
                         : stored
-                          ? 'Replace full text'
-                          : 'Add full text'}
+                          ? 'Replace the Article\'s PDF'
+                          : 'Upload the Article\'s PDF'}
                     </label>
                   </div>
+                  {errorTarget === `fulltext-${item.id}` && (
+                    <p className="w-full rounded-xl bg-destructive/8 px-3 py-2 text-xs leading-5 text-destructive">{error}</p>
+                  )}
                 </article>
               );
             })}
@@ -3896,7 +4206,7 @@ function FullTextStep({
         )}
       </section>
 
-      <section id="fulltext-run" className="surface-card mt-6 scroll-mt-24 p-5 sm:p-6">
+      <section id="fulltext-run" data-error-target="fulltext-run" className="surface-card mt-6 scroll-mt-24 p-5 sm:p-6">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[.14em] text-primary">
@@ -3920,6 +4230,7 @@ function FullTextStep({
               : ''}
           </Badge>
         </div>
+        <RunEstimate stage="fullText" count={batchProgress && batchProgress.processed < batchProgress.total ? batchProgress.total - batchProgress.processed : readyForFullTextScreening.length} benchmark={estimate} running={Boolean(screeningRunningId) || Boolean(batchProgress && batchProgress.processed < batchProgress.total)} remaining={Boolean(batchProgress && batchProgress.processed < batchProgress.total)} />
 
         <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {[
@@ -4006,6 +4317,8 @@ function FullTextStep({
               ? 'Detectives are investigating…'
               : readyForFullTextScreening.length
                 ? 'Start Full-text Screening'
+                : screeningItems.length === 0
+                  ? 'Add full texts to begin'
                 : incompleteFullTexts.length
                   ? 'Screening finished with issues'
                   : 'Full-text screening complete'}
@@ -4086,7 +4399,7 @@ function FullTextStep({
                         <UploadCloud className="size-4" />
                         {uploadingId === item.id
                           ? 'Replacing…'
-                          : 'Replace with searchable PDF'}
+                          : 'Upload the Article\'s PDF'}
                       </label>
                     </div>
                   </article>
@@ -4165,6 +4478,7 @@ function FullTextStep({
                         <FullTextResultCard
                           key={item.id}
                           item={item}
+                          error={errorTarget === `fulltext-decision-${item.id}` ? error : ''}
                           category={category}
                           running={screeningRunningId === item.id}
                           sherlockReady={fullTextSherlockReady}
@@ -4192,6 +4506,7 @@ function FullTextStep({
           reviewId={reviewId}
           items={screeningItems}
           item={readerItem}
+          error={errorTarget === `fulltext-decision-${readerItem.id}` ? error : ''}
           close={() => setReaderReferenceId(null)}
           navigate={setReaderReferenceId}
           saving={decisionSavingId === readerItem.id}
@@ -4206,6 +4521,7 @@ function FullTextReader({
   reviewId,
   items,
   item,
+  error,
   close,
   navigate,
   saving,
@@ -4214,6 +4530,7 @@ function FullTextReader({
   reviewId: string;
   items: FullTextScreeningItem[];
   item: FullTextScreeningItem;
+  error: string;
   close: () => void;
   navigate: (referenceId: string) => void;
   saving: boolean;
@@ -4317,7 +4634,8 @@ function FullTextReader({
         />
       </div>
 
-      <footer className="border-t bg-white px-3 py-3 shadow-[0_-10px_30px_rgba(15,23,42,.08)] sm:px-6">
+      <footer data-error-target={`fulltext-decision-${item.id}`} className="border-t bg-white px-3 py-3 shadow-[0_-10px_30px_rgba(15,23,42,.08)] sm:px-6">
+        {error && <p className="mx-auto mb-2 max-w-5xl rounded-lg bg-destructive/8 px-3 py-2 text-xs leading-5 text-destructive">{error}</p>}
         <div className="mx-auto flex max-w-5xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-center">
           <p className="mr-2 text-center text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground sm:text-left">
             Researcher decision
@@ -4394,6 +4712,7 @@ function fullTextCategory(item: FullTextScreeningItem) {
 
 function FullTextResultCard({
   item,
+  error,
   category,
   running,
   sherlockReady,
@@ -4403,6 +4722,7 @@ function FullTextResultCard({
   decide,
 }: {
   item: FullTextScreeningItem;
+  error: string;
   category: 'include' | 'conflict' | 'exclude';
   running: boolean;
   sherlockReady: boolean;
@@ -4412,7 +4732,8 @@ function FullTextResultCard({
   decide: (referenceId: string, decision: 'include' | 'exclude' | 'unclear') => void;
 }) {
   return (
-    <article className="rounded-xl border bg-white/90 p-3 shadow-sm">
+    <article data-error-target={`fulltext-decision-${item.id}`} className="rounded-xl border bg-white/90 p-3 shadow-sm">
+      {error && <p className="mb-3 rounded-lg bg-destructive/8 px-3 py-2 text-xs leading-5 text-destructive">{error}</p>}
       <div className="flex items-start justify-between gap-3">
         <button
           type="button"
@@ -4436,7 +4757,7 @@ function FullTextResultCard({
           )}
           {item.sherlockStatus === 'complete' && (
             <Badge className="bg-amber-500 text-amber-950">
-              Sherlock: {screeningDecisionLabel(item.sherlockDecision)}
+              Sherlock Holmes: {screeningDecisionLabel(item.sherlockDecision)}
             </Badge>
           )}
         </div>
@@ -4512,6 +4833,7 @@ function FullTextResultCard({
 
 function ScreeningCard({
   reference,
+  error,
   index,
   saving,
   aiRunning,
@@ -4521,6 +4843,7 @@ function ScreeningCard({
   adjudicatorReady,
 }: {
   reference: ScreeningReference;
+  error: string;
   index: number;
   saving: boolean;
   aiRunning: boolean;
@@ -4551,8 +4874,9 @@ function ScreeningCard({
       ? 'border-primary bg-primary text-primary-foreground'
       : 'bg-card';
   return (
-    <article className="surface-card">
+    <article data-error-target={`screening-${reference.id}`} className="surface-card">
       <div className="flex flex-col gap-4 p-5 sm:p-6">
+        {error && <p className="rounded-lg bg-destructive/8 px-3 py-2 text-xs leading-5 text-destructive">{error}</p>}
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[.14em] text-primary">
@@ -5015,11 +5339,13 @@ function Field({
   label,
   required,
   optional,
+  error,
   children,
 }: {
   label: string;
   required?: boolean;
   optional?: boolean;
+  error?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -5036,6 +5362,7 @@ function Field({
         )}
       </span>
       {children}
+      {error && <span className="mt-2 block text-xs leading-5 text-destructive">{error}</span>}
     </label>
   );
 }

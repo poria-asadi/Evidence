@@ -1,0 +1,171 @@
+{
+  "date": "2026-11-16",
+  "source": "Local app run with five public arXiv PDFs; charged USD from OpenRouter usage.cost",
+  "papers": [
+    {
+      "arxivId": "2405.14445",
+      "url": "https://arxiv.org/abs/2405.14445"
+    },
+    {
+      "arxivId": "2310.17526",
+      "url": "https://arxiv.org/abs/2310.17526"
+    },
+    {
+      "arxivId": "2412.15247",
+      "url": "https://arxiv.org/abs/2412.15247"
+    },
+    {
+      "arxivId": "2406.17755",
+      "url": "https://arxiv.org/abs/2406.17755"
+    },
+    {
+      "arxivId": "2404.15667",
+      "url": "https://arxiv.org/abs/2404.15667"
+    }
+  ],
+  "models": {
+    "titleAbstract": [
+      "google/gemini-2.5-flash-lite",
+      "openai/gpt-6-luna",
+      "anthropic/claude-haiku-5.5"
+    ],
+    "fullText": [
+      "google/gemini-2.5-flash-lite",
+      "openai/gpt-6-luna",
+      "anthropic/claude-haiku-5.5"
+    ],
+    "extraction": [
+      "anthropic/claude-haiku-5.5",
+      "openai/gpt-6-luna"
+    ]
+  },
+  "stages": {
+    "titleAbstract": [
+      {
+        "paper": "2405.14445",
+        "seconds": 4.288588417,
+        "usd": 0.0003919,
+        "requests": 4
+      },
+      {
+        "paper": "2310.17526",
+        "seconds": 6.434104708,
+        "usd": 0.00037080000000000007,
+        "requests": 3
+      },
+      {
+        "paper": "2412.15247",
+        "seconds": 2.707944707999999,
+        "usd": 0.0003763,
+        "requests": 3
+      },
+      {
+        "paper": "2406.17755",
+        "seconds": 2.7838873330000005,
+        "usd": 0.0004101999999999999,
+        "requests": 3
+      },
+      {
+        "paper": "2404.15667",
+        "seconds": 3.426072583000001,
+        "usd": 0.0004102000000000001,
+        "requests": 3
+      }
+    ],
+    "fullText": [
+      {
+        "paper": "2405.14445",
+        "seconds": 6.545903125000001,
+        "usd": 0.006768175,
+        "requests": 3
+      },
+      {
+        "paper": "2310.17526",
+        "seconds": 4.649819040999999,
+        "usd": 0.003815449999999999,
+        "requests": 3
+      },
+      {
+        "paper": "2412.15247",
+        "seconds": 4.082502499999995,
+        "usd": 0.004475225000000001,
+        "requests": 3
+      },
+      {
+        "paper": "2406.17755",
+        "seconds": 5.340335374999995,
+        "usd": 0.009931225,
+        "requests": 3
+      },
+      {
+        "paper": "2404.15667",
+        "seconds": 3.7852809169999966,
+        "usd": 0.006134074999999999,
+        "requests": 3
+      }
+    ],
+    "extractionPlan": [
+      {
+        "paper": "six columns",
+        "seconds": 3.2707015420000025,
+        "usd": 0.0003957,
+        "requests": 1
+      }
+    ],
+    "extraction": [
+      {
+        "paper": "2405.14445",
+        "seconds": 8.825198958000001,
+        "usd": 0.01178275,
+        "requests": 4
+      },
+      {
+        "paper": "2310.17526",
+        "seconds": 11.918047665999998,
+        "usd": 0.008286775000000001,
+        "requests": 5
+      },
+      {
+        "paper": "2412.15247",
+        "seconds": 16.499436500000012,
+        "usd": 0.014010209999999999,
+        "requests": 8
+      },
+      {
+        "paper": "2406.17755",
+        "seconds": 17.219104208000005,
+        "usd": 0.0255019,
+        "requests": 6
+      },
+      {
+        "paper": "2404.15667",
+        "seconds": 8.363818750000005,
+        "usd": 0.012868600000000001,
+        "requests": 4
+      }
+    ],
+    "extraction12": [
+      {
+        "paper": "2310.17526",
+        "seconds": 24.342901416999997,
+        "usd": 0.018065899999999996,
+        "requests": 10
+      },
+      {
+        "paper": "2412.15247",
+        "seconds": 22.744001292,
+        "usd": 0.022256880000000007,
+        "requests": 12
+      }
+    ],
+    "extractionPlan12": [
+      {
+        "paper": "twelve columns",
+        "seconds": 10.338492750000002,
+        "usd": 0.0006959999999999999,
+        "requests": 1
+      }
+    ]
+  },
+  "extractionColumns": 6
+}

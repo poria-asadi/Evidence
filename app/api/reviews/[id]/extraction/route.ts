@@ -171,7 +171,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return Response.json({ error: 'Choose a valid extraction action and article.' }, { status: 400 });
   const provider = body.provider === undefined ? 'watson' : body.provider;
   if (!isExtractionProvider(provider)) return Response.json({ error: 'Choose a valid detective.' }, { status: 400 });
-  if (!extractionProviderReady(provider)) return Response.json({ error: `${EXTRACTION_PROVIDER_LABELS[provider]} is not configured.` }, { status: 409 });
+  if (!extractionProviderReady(provider)) return Response.json({ error: `${EXTRACTION_PROVIDER_LABELS[provider]} are not configured.` }, { status: 409 });
   const columns = readPlans(template.schemaJson)[provider];
   if (!columns) return Response.json({ error: `Prepare the sheet for ${EXTRACTION_PROVIDER_LABELS[provider]} first.` }, { status: 409 });
   const articles = await includedFullTexts(id, user.userId);

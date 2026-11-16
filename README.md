@@ -41,6 +41,8 @@ The FX endpoint displays a reference rate and records snapshots. It does not yet
 
 For an existing database, back it up and apply `drizzle/0016_grey_rachel_grey.sql` after `0015`. This removes the old time-based subscription field, converts existing trial accounts to demo accounts, and records surviving prior AI assessments as used demo slots. Existing reviews remain intact. Older AI work whose assessment rows were previously deleted cannot be reconstructed from the usage ledger because it does not store article IDs.
 
+Password recovery uses the same `RESEND_API_KEY` and `VERIFICATION_EMAIL_FROM` settings as signup email. Set `APP_PUBLIC_URL` to the public site origin so reset links point to the correct deployment. Apply `drizzle/0017_password_reset_tokens.sql` after `0016` before enabling the new recovery pages. Reset links expire after 30 minutes, can be used once, and invalidate existing sessions after a password change.
+
 ## Repository contents
 
 The application code, database schema and migrations, configuration, lockfile, and required browser PDF runtime assets are committed. Dependencies, build output, local databases, temporary files, and real environment values are excluded.

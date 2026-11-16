@@ -50,3 +50,30 @@ export async function sendVerificationEmail(email: string, code: string): Promis
     return false;
   }
 }
+
+export function passwordResetEmailConfigured(): boolean {
+  return Boolean(env.RESEND_API_KEY && env.VERIFICATION_EMAIL_FROM);
+}
+
+export async function sendPasswordResetEmail(email: string, link: string): Promise<boolean> {
+  if (!passwordResetEmailConfigured()) return false;
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: env.VERIFICATION_EMAIL_FROM,
+        to: [email],
+        subject: 'Reset your EvidenceFlow password',
+        text: `Use this link to reset your EvidenceFlow password: ${link}\n\nThe link expires in 30 minutes and can only be used once. If you did not request it, you can ignore this email.`,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}

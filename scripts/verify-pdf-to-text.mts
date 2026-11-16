@@ -45,5 +45,5 @@ for (let pageNumber = 1; pageNumber <= 3; pageNumber += 1) {
 }
 assert.equal(originalPdf.byteLength, originalSize, 'PDF extraction must not consume the PDF stored in R2');
 assert.equal(new TextDecoder().decode(originalPdf.slice(0, 5)), '%PDF-');
-await assert.rejects(extractPdfText(await makePdf(1)), /no readable text on page\(s\) 2, 3/);
+await assert.rejects(extractPdfText(await makePdf(1)), /The PDF could not be read on page\(s\) 2, 3\. Upload the Article's PDF\./);
 console.log('PDF worker and whole-document text coverage verified.');

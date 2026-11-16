@@ -70,3 +70,9 @@
   .section-icon svg { @apply size-4; }
   .upload-zone { background: radial-gradient(circle at 50% 20%, oklch(.94 .07 292), transparent 65%), linear-gradient(160deg, oklch(.985 .01 285), oklch(.965 .035 205)); }
 }
+[data-error-highlight='true'] {
+  outline: 2px solid var(--destructive);
+  outline-offset: 3px;
+  border-radius: 0.75rem;
+  scroll-margin-top: 6rem;
+}

@@ -145,9 +145,9 @@ function Hero() {
 const STAGES = ['Protocol', 'Import', 'Screening', 'Full text', 'Extraction'];
 
 const VOTES = [
-  { name: 'Detective 1', decision: 'Included' },
-  { name: 'Detective 2', decision: 'Excluded' },
-  { name: 'Detective 3', decision: 'Needs your decision' },
+  { name: 'Miss Marple', decision: 'Included' },
+  { name: 'Poirot', decision: 'Excluded' },
+  { name: 'Zeous', decision: 'Unclear' },
 ];
 
 function HeroMockup() {
@@ -195,7 +195,7 @@ function HeroMockup() {
             <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
               <span>Record 214 of 1,862 · PubMed</span>
               <span className="rounded-full bg-[oklch(.95_.06_85)] px-2 py-0.5 font-semibold text-[oklch(.45_.1_70)]">
-                Needs your decision
+                Researcher decision pending
               </span>
             </div>
             <p className="mt-2.5 text-sm leading-snug font-semibold">
@@ -231,8 +231,8 @@ function HeroMockup() {
             </div>
 
             <div className="mt-4 rounded-xl bg-[var(--info-soft)] p-3 text-xs leading-5 text-[var(--info-ink)]">
-              <span className="font-semibold">Why it needs your decision: </span>
-              the detectives disagree, and the abstract doesn’t state whether pain lasted more than 12 weeks.
+              <span className="font-semibold">Why the researcher must decide: </span>
+              the AI detectives disagree, and the abstract doesn’t state whether pain lasted more than 12 weeks.
             </div>
 
             <div className="mt-4 flex gap-2">
@@ -340,7 +340,7 @@ const WORKFLOW = [
   {
     icon: Sheet,
     title: 'Data extraction',
-    body: 'Bring your own column sheet or build one in the app. One AI detective, Sherlock, extracts the requested values from each included article and shows supporting passages when available. Missing or uncertain values are flagged for your review before export.',
+    body: 'Bring your own column sheet or build one in the app. Inspector Gadget and Murdoch independently extract values from each included article. Their combined result shows supporting passages and flags uncertain values for your review before export.',
     tags: ['CSV', 'XLSX', 'Evidence excerpts'],
   },
 ];
@@ -440,7 +440,7 @@ function ExtractionMockup() {
           </span>
           <div>
             <p className="text-sm font-semibold">Data extraction</p>
-            <p className="text-xs text-muted-foreground">Study 7 of 42 · Extracted by Sherlock</p>
+            <p className="text-xs text-muted-foreground">Study 7 of 42 · Inspector Gadget &amp; Murdoch</p>
           </div>
         </div>
         <span className="inline-flex items-center gap-1 rounded-full bg-[oklch(.95_.06_85)] px-2.5 py-1 text-[11px] font-semibold text-[oklch(.45_.1_70)]">

@@ -2,7 +2,7 @@ export const EXTRACTION_PROVIDERS = ['watson'] as const;
 export type ExtractionProvider = typeof EXTRACTION_PROVIDERS[number];
 
 export const EXTRACTION_PROVIDER_LABELS: Record<ExtractionProvider, string> = {
-  watson: 'Sherlock',
+  watson: 'Inspector Gadget & Murdoch',
 };
 
 export function isExtractionProvider(value: unknown): value is ExtractionProvider {

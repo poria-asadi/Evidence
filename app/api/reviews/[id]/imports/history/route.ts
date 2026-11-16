@@ -25,10 +25,13 @@ export async function GET(
     FROM uploads WHERE review_id = ? AND owner_id = ? ORDER BY created_at DESC LIMIT 30`)
     .bind(id, user.userId)
     .all();
-  const summary = await env.DB.prepare(`SELECT COUNT(*) AS fileCount,
-    COALESCE(SUM(record_count), 0) AS totalRecords
-    FROM uploads WHERE review_id = ? AND owner_id = ?`)
-    .bind(id, user.userId)
+  const summary = await env.DB.prepare(`SELECT
+    (SELECT COUNT(*) FROM uploads WHERE review_id = ? AND owner_id = ?) AS fileCount,
+    (SELECT COALESCE(SUM(record_count), 0) FROM uploads WHERE review_id = ? AND owner_id = ?) AS totalRecords,
+    (SELECT COUNT(*) FROM "references" r WHERE r.review_id = ?
+      AND NOT EXISTS (SELECT 1 FROM duplicate_pairs d WHERE d.review_id = r.review_id
+        AND d.right_reference_id = r.id AND d.status = 'confirmed_duplicate')) AS uniqueRecords`)
+    .bind(id, user.userId, id, user.userId, id)
     .first();
   return Response.json({ uploads: uploads.results, summary });
 }

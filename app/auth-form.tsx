@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import Link from 'next/link';
 import { ArrowRight, BookOpenCheck, Check } from 'lucide-react';
+import ErrorFeedback from '@/components/error-feedback';
 
 export default function AuthForm({ mode, returnTo }: { mode: 'sign-in' | 'sign-up'; returnTo: string }) {
   const isSignUp = mode === 'sign-up';
@@ -17,12 +19,22 @@ export default function AuthForm({ mode, returnTo }: { mode: 'sign-in' | 'sign-u
   const [awaitingCode, setAwaitingCode] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
+  const [errorTarget, setErrorTarget] = useState('auth-form');
   const [busy, setBusy] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
-    if (isSignUp && !awaitingCode && password !== confirmation) return setError('Passwords do not match.');
+    if (!event.currentTarget.checkValidity()) {
+      const invalid = event.currentTarget.querySelector(':invalid') as HTMLInputElement | null;
+      setErrorTarget(`auth-${invalid?.id || 'form'}`);
+      setError(invalid?.validationMessage || 'Correct the highlighted field and try again.');
+      return;
+    }
+    if (isSignUp && !awaitingCode && password !== confirmation) {
+      setErrorTarget('auth-confirmation');
+      return setError('Passwords do not match.');
+    }
     setBusy(true);
     try {
       const response = await fetch(`/api/auth/${awaitingCode ? 'verify-email' : mode}`, {
@@ -40,7 +52,16 @@ export default function AuthForm({ mode, returnTo }: { mode: 'sign-in' | 'sign-u
       }
       window.location.assign(returnTo);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Please try again.');
+      const message = cause instanceof Error ? cause.message : 'Please try again.';
+      const field = awaitingCode ? 'code'
+        : !isSignUp && /email|username|password/i.test(message) ? 'username'
+        : message.toLowerCase().includes('password') ? 'password'
+        : message.toLowerCase().includes('email') ? 'email'
+        : message.toLowerCase().includes('username') ? 'username'
+        : message.toLowerCase().includes('name') ? 'firstName'
+        : 'form';
+      setErrorTarget(`auth-${field}`);
+      setError(message);
       setBusy(false);
     }
   }
@@ -67,27 +88,27 @@ export default function AuthForm({ mode, returnTo }: { mode: 'sign-in' | 'sign-u
           <p className="text-sm font-semibold text-primary">Researcher account</p>
           <h2 className="mt-2 text-3xl font-semibold tracking-[-.035em]">{awaitingCode ? 'Verify your email' : isSignUp ? 'Create your account' : 'Welcome back'}</h2>
           {(awaitingCode || !isSignUp) && <p className="mt-3 leading-7 text-muted-foreground">{awaitingCode ? `Enter the six-digit code sent to ${email}. It expires in 10 minutes.` : 'Sign in with your email or username and password.'}</p>}
-          <form onSubmit={submit} className="mt-8 space-y-5 rounded-2xl border bg-card p-6 shadow-[0_18px_50px_rgb(20_45_62/8%)]">
+          <form onSubmit={submit} noValidate data-error-target="auth-form" className="mt-8 space-y-5 rounded-2xl border bg-card p-6 shadow-[0_18px_50px_rgb(20_45_62/8%)]">
             {awaitingCode ? <>
-              <div><label htmlFor="code" className="mb-2 block text-sm font-medium">Verification code</label><input id="code" name="code" type="text" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" required maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))} className="h-11 w-full rounded-xl border bg-background px-3 text-center text-lg tracking-[.35em] outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div>
+              <div><label htmlFor="code" className="mb-2 block text-sm font-medium">Verification code</label><input id="code" data-error-target="auth-code" name="code" type="text" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" required maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))} className="h-11 w-full rounded-xl border bg-background px-3 text-center text-lg tracking-[.35em] outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div>
               <button type="button" onClick={() => { setAwaitingCode(false); setCode(''); setError(''); }} className="text-sm font-semibold text-primary hover:underline">Edit details or request a new code</button>
             </> : <>
               {isSignUp && <>
-                <div className="grid grid-cols-2 gap-3"><div><label htmlFor="firstName" className="mb-2 block text-sm font-medium">First name</label><input id="firstName" type="text" required autoComplete="given-name" maxLength={120} value={firstName} onChange={(event) => setFirstName(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div><div><label htmlFor="lastName" className="mb-2 block text-sm font-medium">Last name</label><input id="lastName" type="text" required autoComplete="family-name" maxLength={120} value={lastName} onChange={(event) => setLastName(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div></div>
-                <div><label htmlFor="fieldOfStudy" className="mb-2 block text-sm font-medium">Field of study</label><input id="fieldOfStudy" type="text" required maxLength={120} value={fieldOfStudy} onChange={(event) => setFieldOfStudy(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div>
-                <div><label htmlFor="educationLevel" className="mb-2 block text-sm font-medium">Education level</label><select id="educationLevel" required value={educationLevel} onChange={(event) => setEducationLevel(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary"><option value="">Select your level</option><option value="Undergraduate">Undergraduate</option><option value="Master's">Master&apos;s</option><option value="Doctorate">Doctorate</option><option value="Postdoctoral">Postdoctoral</option><option value="Other">Other</option></select></div>
-                <div><label htmlFor="email" className="mb-2 block text-sm font-medium">Email address</label><input id="email" type="email" required autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div>
+                <div className="grid grid-cols-2 gap-3"><div><label htmlFor="firstName" className="mb-2 block text-sm font-medium">First name</label><input id="firstName" data-error-target="auth-firstName" type="text" required autoComplete="given-name" maxLength={120} value={firstName} onChange={(event) => setFirstName(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div><div><label htmlFor="lastName" className="mb-2 block text-sm font-medium">Last name</label><input id="lastName" data-error-target="auth-lastName" type="text" required autoComplete="family-name" maxLength={120} value={lastName} onChange={(event) => setLastName(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div></div>
+                <div><label htmlFor="fieldOfStudy" className="mb-2 block text-sm font-medium">Field of study</label><input id="fieldOfStudy" data-error-target="auth-fieldOfStudy" type="text" required maxLength={120} value={fieldOfStudy} onChange={(event) => setFieldOfStudy(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div>
+                <div><label htmlFor="educationLevel" className="mb-2 block text-sm font-medium">Education level</label><select id="educationLevel" data-error-target="auth-educationLevel" required value={educationLevel} onChange={(event) => setEducationLevel(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary"><option value="">Select your level</option><option value="Undergraduate">Undergraduate</option><option value="Master's">Master&apos;s</option><option value="Doctorate">Doctorate</option><option value="Postdoctoral">Postdoctoral</option><option value="Other">Other</option></select></div>
+                <div><label htmlFor="email" className="mb-2 block text-sm font-medium">Email address</label><input id="email" data-error-target="auth-email" type="email" required autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div>
               </>}
-              <div><label htmlFor="username" className="mb-2 block text-sm font-medium">{isSignUp ? 'Username' : 'Email or username'}</label><input id="username" name="username" type="text" required minLength={isSignUp ? 3 : undefined} maxLength={isSignUp ? 32 : 254} autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={(event) => setUsername(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" />{isSignUp && <p className="mt-1.5 text-xs text-muted-foreground">3–32 letters, numbers, dots, hyphens or underscores.</p>}</div>
-              <div><label htmlFor="password" className="mb-2 block text-sm font-medium">Password</label><input id="password" name="password" type="password" required minLength={isSignUp ? 12 : undefined} maxLength={128} autoComplete={isSignUp ? 'new-password' : 'current-password'} value={password} onChange={(event) => setPassword(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" />{isSignUp && <p className="mt-1.5 text-xs text-muted-foreground">Use at least 12 characters. A long passphrase works well.</p>}</div>
-              {isSignUp ? <div><label htmlFor="confirmation" className="mb-2 block text-sm font-medium">Confirm password</label><input id="confirmation" name="confirmation" type="password" required minLength={12} maxLength={128} autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div> : <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} className="size-4 accent-primary" />Remember me</label>}
+              <div><label htmlFor="username" className="mb-2 block text-sm font-medium">{isSignUp ? 'Username' : 'Email or username'}</label><input id="username" data-error-target="auth-username" name="username" type="text" required minLength={isSignUp ? 3 : undefined} maxLength={isSignUp ? 32 : 254} autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={(event) => setUsername(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" />{isSignUp && <p className="mt-1.5 text-xs text-muted-foreground">3–32 letters, numbers, dots, hyphens or underscores.</p>}</div>
+              <div><label htmlFor="password" className="mb-2 block text-sm font-medium">Password</label><input id="password" data-error-target="auth-password" name="password" type="password" required minLength={isSignUp ? 12 : undefined} maxLength={128} autoComplete={isSignUp ? 'new-password' : 'current-password'} value={password} onChange={(event) => setPassword(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" />{isSignUp && <p className="mt-1.5 text-xs text-muted-foreground">Use at least 12 characters. A long passphrase works well.</p>}</div>
+              {isSignUp ? <div><label htmlFor="confirmation" className="mb-2 block text-sm font-medium">Confirm password</label><input id="confirmation" data-error-target="auth-confirmation" name="confirmation" type="password" required minLength={12} maxLength={128} autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className="h-11 w-full rounded-xl border bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div> : <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><label className="flex cursor-pointer items-center gap-2"><input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} className="size-4 accent-primary" />Remember me</label><Link href="/forgot-password" className="font-semibold text-primary hover:underline">Forgot password?</Link></div>}
             </>}
-            {error && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
             <button type="submit" disabled={busy} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60">{busy ? 'Please wait…' : awaitingCode ? 'Verify and create account' : isSignUp ? 'Send verification code' : 'Sign in'}<ArrowRight className="size-4" /></button>
             <p className="text-center text-sm text-muted-foreground">{isSignUp ? 'Already have an account?' : 'New to EvidenceFlow?'} <a href={alternative} className="font-semibold text-primary hover:underline">{isSignUp ? 'Sign in' : 'Create an account'}</a></p>
           </form>
         </div>
       </section>
+      <ErrorFeedback message={error} target={errorTarget} fallbackTarget="auth-form" onClose={() => setError('')} />
     </main>
   );
 }

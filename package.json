@@ -19,6 +19,8 @@
     "test:extraction-year": "node --experimental-strip-types scripts/verify-extraction-year.mts",
     "test:pdf-to-text": "node --experimental-strip-types scripts/verify-pdf-to-text.mts",
     "test:usage-pricing": "node --experimental-strip-types scripts/verify-usage-pricing.mts",
+    "test:run-estimates": "node --experimental-strip-types scripts/verify-run-estimates.mts",
+    "test:password-reset": "node --experimental-strip-types scripts/verify-password-reset.mts",
     "test:fx-rates": "node --experimental-strip-types scripts/verify-fx-rates.mts",
     "db:generate": "drizzle-kit generate"
   },
